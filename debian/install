@@ -1,0 +1,5 @@
+btrbk usr/sbin
+ssh_filter_btrbk.sh usr/share/btrbk/scripts
+contrib/crypt/kdf_pbkdf2.py usr/share/btrbk/scripts
+contrib/migration/raw_suffix2sidecar usr/share/btrbk/scripts
+contrib/cron/btrbk-mail usr/share/btrbk/scripts

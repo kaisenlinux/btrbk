@@ -1,0 +1,26 @@
+Source: btrbk
+Section: utils
+Priority: optional
+XSBC-Original-Maintainer: Axel Burri <axel@tty0.ch>
+Maintainer: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
+Standards-Version: 4.5.1
+Build-Depends:
+ debhelper (>= 13),
+ asciidoctor (>= 1.5.7) | asciidoc,
+Homepage: https://digint.ch/btrbk/
+Vcs-Git: https://gitlab.com/kaisenlinux/packages/btrbk.git
+Vcs-Browser: https://gitlab.com/kaisenlinux/packages/btrbk
+
+
+Package: btrbk
+Architecture: all
+Depends: perl, btrfs-progs (>= 3.18.2), ${misc:Depends}
+Recommends: openssh-client, pv, mbuffer
+Suggests:
+ openssl,
+ python3,
+Description: backup tool for btrfs subvolumes
+ Backup tool for btrfs subvolumes, using a configuration file, allows
+ creation of backups from multiple sources to multiple destinations,
+ with ssh and flexible retention policy support (hourly, daily,
+ weekly, monthly).

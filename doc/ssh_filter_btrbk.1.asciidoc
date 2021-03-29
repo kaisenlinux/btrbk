@@ -1,0 +1,112 @@
+ssh_filter_btrbk(1)
+===================
+:date: 2021-03-21
+:release-version: 0.31.2
+:man manual: Btrbk Manual
+:man source: Btrbk {release-version}
+
+
+NAME
+----
+
+ssh_filter_btrbk - ssh command filter script for btrbk
+
+
+SYNOPSIS
+--------
+
+[verse]
+ssh_filter_btrbk.sh [-s|--source] [-t|--target] [-d|--delete]
+    [-i|--info] [--snapshot] [--send] [--receive]
+    [-p|--restrict-path <path>] [-l|--log] [--sudo]
+
+
+DESCRIPTION
+-----------
+
+*ssh_filter_btrbk.sh* restricts SSH commands to commands used by
+'btrbk'. It examines the SSH_ORIGINAL_COMMAND environment variable
+(set by sshd) and executes it only if it contains commands used by
+'btrbk'.
+
+The accepted commands are specified by the "--source", "--target",
+"--delete" and "--info" options.
+
+The following commands are always allowed:
+
+ - "btrfs subvolume show" (not affected by "--restrict-path")
+ - "btrfs subvolume list" (not affected by "--restrict-path")
+ - "readlink"
+ - "test -d" (only if "compat busybox" configuration option is set)
+ - "cat /proc/self/mountinfo"
+ - pipes through "gzip", "pigz", "bzip2", "pbzip2", "xz", "lzop",
+   "lz4", "zstd" (stream_compress)
+ - pipes through "mbuffer" (stream_buffer, rate_limit)
+
+Example line in /root/.ssh/authorized_keys on a backup target host:
+
+    command="ssh_filter_btrbk.sh --target --delete --restrict-path /mnt/btr_backup" ssh-rsa AAAAB3NzaC1...hwumXFRQBL btrbk@mydomain.com
+
+
+OPTIONS
+-------
+
+-s, --source::
+    Allow commands for backup source: "btrfs subvolume snapshot",
+    "btrfs send". Equivalent to "--snapshot --send".
+
+-t, --target::
+    Allow commands for backup and archive target: "btrfs receive",
+    "mkdir".
+
+-d, --delete::
+    Allow commands for subvolume deletion: "btrfs subvolume
+    delete". This is used for backup source if
+    'snapshot_preserve_daily' is not set to ``all'', and for backup
+    targets if 'target_preserve_daily' is not set to ``all''.
+
+-i, --info::
+    Allow informative commands: "btrfs subvolume find-new", "btrfs
+    filesystem usage". This is used by btrbk 'info' and 'diff'
+    commands.
+
+--snapshot::
+    Allow btrfs snapshot command: "btrfs subvolume snapshot".
+
+--send::
+    Allow btrfs send command: "btrfs send".
+
+--receive::
+    Allow btrfs receive command: "btrfs receive".
+
+-p, --restrict-path <path>::
+    Restrict commands to <path>. Note that "btrfs subvolume show",
+    "btrfs subvolume list" are NOT affected by this option.
+
+-l, --log::
+    Log ACCEPT and REJECT messages to the system log.
+
+--sudo::
+    Allow btrfs commands to be called via sudo. Enable this if you
+    have "backend btrfs-progs-sudo" in your btrbk configuration file.
+
+
+AVAILABILITY
+------------
+
+Please refer to the btrbk project page *<https://digint.ch/btrbk/>*
+for further details.
+
+
+SEE ALSO
+--------
+
+*btrbk*(1),
+*btrbk.conf*(5),
+*btrfs*(8)
+
+
+AUTHOR
+------
+
+Axel Burri <axel@tty0.ch>

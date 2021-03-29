@@ -1,0 +1,9 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_install:
+	install -D -m 644 debian/timer debian/btrbk/lib/systemd/system/btrbk.timer
+	mkdir -p debian/btrbk/etc
+	cp btrbk.conf.example debian/btrbk/etc/btrbk.conf
