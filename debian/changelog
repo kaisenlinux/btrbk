@@ -1,3 +1,10 @@
+btrbk (0.31.3-1kaisen) kaisen-packages; urgency=medium
+
+  * Refresh quilt patchs
+  * Import new upstream release
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Wed, 18 Aug 2021 10:51:39 +0200
+
 btrbk (0.31.2-1kaisen1) kaisen-packages; urgency=medium
 
   * Rebuild to update btrbk

@@ -1,2 +1,2 @@
-000-fix-path-in-systemd-service.patch
-001-fix-systemd-service-satet-failed.patch
+000-fix-systemd-patch-and-install.patch
+001-fix-systemd-service-state-failed.patch

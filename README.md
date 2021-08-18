@@ -72,8 +72,8 @@ a full description of the command line options.
   [btrbk(1)]: https://digint.ch/btrbk/doc/btrbk.1.html
 
 
-Configuration File
-==================
+Configuration
+=============
 
 Before running `btrbk`, you will need to create a configuration
 file. You might want to take a look at `btrbk.conf.example` provided
@@ -88,6 +88,22 @@ running btrbk with the `-n,--dryrun` option:
 This will read all btrfs information on the source/target filesystems
 and show what actions would be performed (without writing anything to
 the disks).
+
+The examples below assume that the btrfs subvolume containing `home`
+and `rootfs` is mounted at `/mnt/btr_pool`. This is usually the btrfs
+root subvolume, which always has `subvolid=5`.
+
+Note that mounting subvolid=5 is *mandatory* if you want to backup
+your root filesystem `/`.
+
+/etc/fstab:
+
+    /dev/sda1  /mnt/btr_pool  btrfs  subvolid=5,noatime  0 0
+
+Note that some default btrfs installations (e.g. Ubuntu) use subvolume
+names `@` for rootfs (mounted at `/`) and `@home` for `/home`, as a
+naming convention. If this is the case on your file system, replace
+the `subvolume` delcarations in the examples accordingly.
 
   [btrbk.conf(5)]: https://digint.ch/btrbk/doc/btrbk.conf.5.html
 
@@ -177,6 +193,9 @@ Retention policy:
     snapshot_preserve_min   2d
     snapshot_preserve      14d
 
+    # Create snapshots only if the backup disk is attached
+    #snapshot_create ondemand
+
     target_preserve_min    no
     target_preserve        20d 10w *m
 
@@ -202,10 +221,11 @@ Retention policy:
     * `/mnt/btr_backup/mylaptop/rootfs.YYYYMMDD`
     * `/mnt/btr_backup/mylaptop/home.YYYYMMDD`
 
-If you want the snapshots to be created only if the backup disk is
-attached, simply add the following line to the config:
+If you prefer triggering the backups manually, change the cron command
+to run the `snapshot` action instead of `run`. Start the backups
+manually by running:
 
-    snapshot_create ondemand
+    # btrbk resume
 
 For a quick additional snapshot of your home, run:
 
@@ -677,7 +697,7 @@ If you would like to contribute or have found bugs:
 
   * Visit the [btrbk project page on GitHub] and use the
     [issues tracker] there.
-  * Talk to us on Freenode in `#btrbk`.
+  * Talk to us on [Libera.Chat] in `#btrbk`.
   * Contact the author via email (the email address can be found in
     the sources).
 
@@ -685,6 +705,7 @@ Any feedback is appreciated!
 
   [btrbk project page on GitHub]: https://github.com/digint/btrbk
   [issues tracker]: https://github.com/digint/btrbk/issues
+  [Libera.Chat]: https://libera.chat
 
 
 License

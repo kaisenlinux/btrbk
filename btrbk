@@ -34,7 +34,7 @@ use Time::Local qw( timelocal timegm timegm_nocheck );
 use IPC::Open3 qw(open3);
 use Symbol qw(gensym);
 
-our $VERSION         = '0.31.2';
+our $VERSION         = '0.31.3';
 our $AUTHOR          = 'Axel Burri <axel@tty0.ch>';
 our $PROJECT_HOME    = '<https://digint.ch/btrbk/>';
 
@@ -54,7 +54,7 @@ my %compression = (
   xz     => { name => 'xz',     format => 'xz',  compress_cmd => [ 'xz',     '-c' ], decompress_cmd => [ 'xz',     '-d', '-c' ], level_min => 0, level_max => 9, threads => '-T' },
   lzo    => { name => 'lzo',    format => 'lzo', compress_cmd => [ 'lzop',   '-c' ], decompress_cmd => [ 'lzop',   '-d', '-c' ], level_min => 1, level_max => 9 },
   lz4    => { name => 'lz4',    format => 'lz4', compress_cmd => [ 'lz4',    '-c' ], decompress_cmd => [ 'lz4',    '-d', '-c' ], level_min => 1, level_max => 9 },
-  zstd   => { name => 'zstd',   format => 'zst', compress_cmd => [ 'zstd',   '-c' ], decompress_cmd => [ 'zstd',   '-d', '-c' ], level_min => 1, level_max => 19, threads => '-T', long => '--long=' },
+  zstd   => { name => 'zstd',   format => 'zst', compress_cmd => [ 'zstd',   '-c' ], decompress_cmd => [ 'zstd',   '-d', '-c' ], level_min => 1, level_max => 19, threads => '-T', long => '--long=', adapt => '--adapt' },
  );
 
 my $compress_format_alt = join '|', map { $_->{format} } values %compression; # note: this contains duplicate alternations
@@ -110,6 +110,7 @@ my %config_options = (
   stream_compress_level       => { default => "default", accept => [ "default" ], accept_numeric => 1 },
   stream_compress_long        => { default => "default", accept => [ "default" ], accept_numeric => 1 },
   stream_compress_threads     => { default => "default", accept => [ "default" ], accept_numeric => 1 },
+  stream_compress_adapt       => { default => undef,     accept => [ "yes", "no" ] },
 
   raw_target_compress         => { default => undef,     accept => [ "no", (keys %compression) ] },
   raw_target_compress_level   => { default => "default", accept => [ "default" ], accept_numeric => 1 },
@@ -150,6 +151,8 @@ my %config_options = (
   cache_dir                   => { default => undef,     accept_file => { absolute => 1 }, allow_multiple => 1, context => [ "global" ] },
   ignore_extent_data_inline   => { default => "yes",     accept => [ "yes", "no" ] },
 
+  warn_unknown_targets        => { default => undef,     accept => [ "yes", "no" ] },
+
   # deprecated options
   ssh_port                    => { default => "default", accept => [ "default" ], accept_numeric => 1,
                                    deprecated => { DEFAULT => { warn => 'Please use "ssh://hostname[:port]" notation in the "volume" and "target" configuration lines.' } } },
@@ -189,80 +192,117 @@ my %config_options = (
 my @config_target_types = qw(send-receive raw);
 
 my %table_formats = (
-  list_volume => { table => [ qw( -volume_host -volume_port volume_path ) ],
-                   long  => [ qw(  volume_host -volume_port volume_path -volume_rsh ) ],
-                   raw   => [ qw( volume_url volume_host volume_port volume_path volume_rsh ) ],
-                 },
-  list_source => { table => [ qw( -source_host -source_port source_subvolume snapshot_path snapshot_name ) ],
-                   long  => [ qw(  source_host -source_port source_subvolume snapshot_path snapshot_name -source_rsh ) ],
-                   raw   => [ qw( source_url source_host source_port source_path snapshot_path snapshot_name source_rsh ) ],
-                 },
-  list_target => { table => [ qw( -target_host -target_port target_path ) ],
-                   long  => [ qw(  target_host -target_port target_path -target_rsh ) ],
-                   raw   => [ qw( target_url target_host target_port target_path target_rsh ) ],
-                 },
-  list        => { table => [ qw( -source_host -source_port source_subvolume snapshot_path snapshot_name -target_host -target_port target_path ) ],
-                   long  => [ qw( -source_host -source_port source_subvolume snapshot_path snapshot_name -target_host -target_port target_path target_type snapshot_preserve target_preserve ) ],
-                   raw   => [ qw( source_url source_host source_port source_subvolume snapshot_path snapshot_name target_url target_host target_port target_path target_type snapshot_preserve target_preserve source_rsh target_rsh ) ],
-                 },
+  config_volume => {
+    table => [ qw( -volume_host -volume_port volume_path ) ],
+    long  => [ qw(  volume_host -volume_port volume_path -volume_rsh ) ],
+    raw   => [ qw( volume_url volume_host volume_port volume_path volume_rsh ) ],
+    single_column => [ qw( volume_url ) ],
+  },
 
-  resolved    => { table => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status -target_host -target_port target_subvolume             ) ],
-                   long  => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status -target_host -target_port target_subvolume target_type ) ],
-                   raw   => [ qw( type source_url source_host source_port source_path snapshot_path snapshot_name status target_url target_host target_port target_path target_type source_rsh target_rsh ) ],
-                   # NOTE: snapshot_path is ambigous and does NOT print SUBVOL_PATH here (should be snapshot_subvolume, left as-is for compatibility)
-                 },
+  config_source => {
+    table => [ qw( -source_host -source_port source_subvolume snapshot_path snapshot_name ) ],
+    long  => [ qw(  source_host -source_port source_subvolume snapshot_path snapshot_name -source_rsh ) ],
+    raw   => [ qw( source_url source_host source_port source_path snapshot_path snapshot_name source_rsh ) ],
+    single_column => [ qw( source_url ) ],
+  },
 
-  snapshots   => { table => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status ) ],
-                   long  => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status ) ],
-                   raw   => [ qw( source_url source_host source_port source_path snapshot_subvolume snapshot_name status source_rsh ) ],
-                 },
+  config_target => {
+    table => [ qw( -target_host -target_port target_path ) ],
+    long  => [ qw(  target_host -target_port target_path -target_rsh ) ],
+    raw   => [ qw( target_url target_host target_port target_path target_rsh ) ],
+    single_column => [ qw( target_url ) ],
+  },
 
-  stats       => { table => [ qw( -source_host -source_port source_subvolume snapshot_subvolume  -target_host -target_port -target_subvolume snapshots  -backups ) ],
-                   long  => [ qw( -source_host -source_port source_subvolume snapshot_subvolume  -target_host -target_port -target_subvolume snapshot_status backup_status snapshots -backups -correlated -orphaned -incomplete ) ],
-                   raw   => [ qw( source_url source_host source_port source_subvolume snapshot_subvolume snapshot_name target_url target_host target_port target_subvolume snapshot_status backup_status snapshots backups correlated orphaned incomplete ) ],
-                   RALIGN => { snapshots=>1, backups=>1, correlated=>1, orphaned=>1, incomplete=>1 },
-                 },
+  config => {
+    table => [ qw( -source_host -source_port source_subvolume snapshot_path snapshot_name -target_host -target_port target_path ) ],
+    long  => [ qw( -source_host -source_port source_subvolume snapshot_path snapshot_name -target_host -target_port target_path target_type snapshot_preserve target_preserve ) ],
+    raw   => [ qw( source_url source_host source_port source_subvolume snapshot_path snapshot_name target_url target_host target_port target_path target_type snapshot_preserve target_preserve source_rsh target_rsh ) ],
+  },
 
-  schedule    => { table => [ qw( action -host -port subvolume scheme reason ) ],
-                   long  => [ qw( action -host -port root_path subvolume_path scheme reason ) ],
-                   raw   => [ qw( topic action url host port path hod dow min h d w m y) ],
-                 },
+  resolved => {
+    # NOTE: snapshot_path is ambigous and does NOT print SUBVOL_PATH here (should be snapshot_subvolume, left as-is for compatibility)
+    table => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status -target_host -target_port target_subvolume             ) ],
+    long  => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status -target_host -target_port target_subvolume target_type ) ],
+    raw   => [ qw( type source_url source_host source_port source_path snapshot_path snapshot_name status target_url target_host target_port target_path target_type source_rsh target_rsh ) ],
+  },
 
-  usage       => { table => [ qw(      -host -port path size used free ) ],
-                   long  => [ qw( type -host -port path size used device_size device_allocated device_unallocated device_missing device_used free free_min data_ratio metadata_ratio global_reserve global_reserve_used ) ],
-                   raw   => [ qw( type host  port path size used device_size device_allocated device_unallocated device_missing device_used free free_min data_ratio metadata_ratio global_reserve global_reserve_used ) ],
-                   RALIGN => { size=>1, used=>1, device_size=>1, device_allocated=>1, device_unallocated=>1, device_missing=>1, device_used=>1, free=>1, free_min=>1, data_ratio=>1, metadata_ratio=>1, global_reserve=>1, global_reserve_used=>1 },
-                 },
+  snapshots => {
+    table => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status ) ],
+    long  => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status ) ],
+    raw   => [ qw( source_url source_host source_port source_path snapshot_subvolume snapshot_name status source_rsh ) ],
+    single_column => [ qw( snapshot_url ) ],
+  },
 
-  transaction => { table  => [ qw(                type status          -target_host -target_port target_subvolume -source_host -source_port source_subvolume parent_subvolume ) ],
-                   long   => [ qw(      localtime type status duration  target_host -target_port target_subvolume  source_host -source_port source_subvolume parent_subvolume message ) ],
-                   tlog   => [ qw(      localtime type status          target_url source_url parent_url message ) ],
-                   syslog => [ qw(                type status          target_url source_url parent_url message ) ],
-                   raw    => [ qw( time localtime type status duration target_url source_url parent_url message ) ],
-                 },
+  backups => { # same as resolved, except for single_column
+    # NOTE: snapshot_path is ambigous and does NOT print SUBVOL_PATH here (should be snapshot_subvolume, left as-is for compatibility)
+    table => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status -target_host -target_port target_subvolume             ) ],
+    long  => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status -target_host -target_port target_subvolume target_type ) ],
+    raw   => [ qw( type source_url source_host source_port source_path snapshot_path snapshot_name status target_url target_host target_port target_path target_type source_rsh target_rsh ) ],
+    single_column => [ qw( target_url ) ],
+  },
 
-  origin_tree => { table => [ qw( tree uuid parent_uuid received_uuid ) ],
-                   long  => [ qw( tree uuid parent_uuid received_uuid recursion ) ],
-                   raw   => [ qw( tree uuid parent_uuid received_uuid recursion ) ],
-                 },
+  latest => { # same as resolved, except hiding target if not present
+    # NOTE: snapshot_path is ambigous and does NOT print SUBVOL_PATH here (should be snapshot_subvolume, left as-is for compatibility)
+    table => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status -target_host -target_port -target_subvolume              ) ],
+    long  => [ qw( -source_host -source_port source_subvolume snapshot_subvolume status -target_host -target_port -target_subvolume -target_type ) ],
+    raw   => [ qw( type source_url source_host source_port source_path snapshot_path snapshot_name status target_url target_host target_port target_path target_type source_rsh target_rsh ) ],
+  },
 
-  diff        => { table => [ qw( flags count size file ) ],
-                   long  => [ qw( flags count size file ) ],
-                   raw   => [ qw( flags count size file ) ],
-                   RALIGN => { count=>1, size=>1 },
-                 },
+  stats => {
+    table => [ qw( -source_host -source_port source_subvolume snapshot_subvolume  -target_host -target_port -target_subvolume snapshots  -backups ) ],
+    long  => [ qw( -source_host -source_port source_subvolume snapshot_subvolume  -target_host -target_port -target_subvolume snapshot_status backup_status snapshots -backups -correlated -orphaned -incomplete ) ],
+    raw   => [ qw( source_url source_host source_port source_subvolume snapshot_subvolume snapshot_name target_url target_host target_port target_subvolume snapshot_status backup_status snapshots backups correlated orphaned incomplete ) ],
+    RALIGN => { snapshots=>1, backups=>1, correlated=>1, orphaned=>1, incomplete=>1 },
+  },
 
-  fs_list     => { table => [ qw( -host mount_source mount_subvol mount_point id flags subvolume_path path ) ],
-                   short => [ qw( -host mount_source                          id flags                path ) ],
-                   long  => [ qw( -host mount_source id top cgen gen uuid parent_uuid received_uuid flags path ) ],
-                   raw   => [ qw(  host mount_source mount_subvol mount_point mount_subvolid id top_level cgen gen uuid parent_uuid received_uuid readonly path subvolume_path subvolume_rel_path ) ],
-                 },
+  schedule => {
+    table => [ qw( action -host -port subvolume scheme reason ) ],
+    long  => [ qw( action -host -port root_path subvolume_path scheme reason ) ],
+    raw   => [ qw( topic action url host port path hod dow min h d w m y) ],
+  },
 
-  extent_diff => { table => [ qw(             total exclusive -diff -set subvol ) ],
-                   long  => [ qw( id cgen gen total exclusive -diff -set subvol ) ],
-                   raw   => [ qw( id cgen gen total exclusive -diff -set subvol ) ],
-                   RALIGN => { total=>1, exclusive=>1, diff=>1, set=>1, cgen=>1, gen=>1 },
-                 },
+  usage => {
+    table => [ qw(      -host -port path size used free ) ],
+    long  => [ qw( type -host -port path size used device_size device_allocated device_unallocated device_missing device_used free free_min data_ratio metadata_ratio global_reserve global_reserve_used ) ],
+    raw   => [ qw( type host  port path size used device_size device_allocated device_unallocated device_missing device_used free free_min data_ratio metadata_ratio global_reserve global_reserve_used ) ],
+    RALIGN => { size=>1, used=>1, device_size=>1, device_allocated=>1, device_unallocated=>1, device_missing=>1, device_used=>1, free=>1, free_min=>1, data_ratio=>1, metadata_ratio=>1, global_reserve=>1, global_reserve_used=>1 },
+  },
+
+  transaction => {
+    table  => [ qw(                type status          -target_host -target_port target_subvolume -source_host -source_port source_subvolume parent_subvolume ) ],
+    long   => [ qw(      localtime type status duration  target_host -target_port target_subvolume  source_host -source_port source_subvolume parent_subvolume message ) ],
+    tlog   => [ qw(      localtime type status          target_url source_url parent_url message ) ],
+    syslog => [ qw(                type status          target_url source_url parent_url message ) ],
+    raw    => [ qw( time localtime type status duration target_url source_url parent_url message ) ],
+  },
+
+  origin_tree => {
+    table => [ qw( tree uuid parent_uuid received_uuid ) ],
+    long  => [ qw( tree uuid parent_uuid received_uuid recursion ) ],
+    raw   => [ qw( tree uuid parent_uuid received_uuid recursion ) ],
+  },
+
+  diff => {
+    table => [ qw( flags count size file ) ],
+    long  => [ qw( flags count size file ) ],
+    raw   => [ qw( flags count size file ) ],
+    RALIGN => { count=>1, size=>1 },
+  },
+
+  fs_list => {
+    table => [ qw( -host mount_source mount_subvol mount_point id flags subvolume_path path ) ],
+    short => [ qw( -host mount_source                          id flags                path ) ],
+    long  => [ qw( -host mount_source id top cgen gen uuid parent_uuid received_uuid flags path ) ],
+    raw   => [ qw(  host mount_source mount_subvol mount_point mount_subvolid id top_level cgen gen uuid parent_uuid received_uuid readonly path subvolume_path subvolume_rel_path url ) ],
+    single_column => [ qw( url ) ],
+  },
+
+  extent_diff => {
+    table => [ qw(             total exclusive -diff -set subvol ) ],
+    long  => [ qw( id cgen gen total exclusive -diff -set subvol ) ],
+    raw   => [ qw( id cgen gen total exclusive -diff -set subvol ) ],
+    RALIGN => { total=>1, exclusive=>1, diff=>1, set=>1, cgen=>1, gen=>1 },
+  },
 );
 
 my %backend_cmd_map = (
@@ -371,6 +411,7 @@ options:
        --version             display version information
    -l, --long                use long listing format
    -u, --uuid                print uuid table (parent/received relations)
+   -1, --single-column       Print path column only
        --raw                 print raw table format
    -v, --verbose             increase output verbosity
    -c, --config=FILE         specify btrbk configuration file
@@ -441,10 +482,15 @@ sub INFO  { _log_cont("",          @_)         if($loglevel >= 2) }
 sub WARN  { _log_cont("WARNING: ", @_)         if($loglevel >= 1) }
 sub ERROR { _log_cont("ERROR: ",   @_) }
 
+sub INFO_ONCE {
+  my $t = shift;
+  if($warn_once{INFO}{$t}) { TRACE("WARNING(again): $t", @_) if($do_trace); return 0; }
+  else { $warn_once{INFO}{$t} = 1; INFO($t, @_); return 1; }
+}
 sub WARN_ONCE {
   my $t = shift;
-  if($warn_once{$t}) { TRACE("WARNING(again): $t", @_) if($do_trace); return 0; }
-  else { $warn_once{$t} = 1; WARN($t, @_); return 1; }
+  if($warn_once{WARN}{$t}) { TRACE("INFO(again): $t", @_) if($do_trace); return 0; }
+  else { $warn_once{WARN}{$t} = 1; WARN($t, @_); return 1; }
 }
 
 sub VINFO {
@@ -692,6 +738,15 @@ sub compress_cmd_text($;$)
       WARN_ONCE "Long distance matching is not supported for '$cc->{name}', ignoring";
     }
   }
+  if(defined($def->{adapt})) {
+    my $adapt_opt = $cc->{adapt};
+    if($adapt_opt) {
+      push @cmd, $adapt_opt;
+    }
+    else {
+      WARN_ONCE "Adaptive compression is not supported for '$cc->{name}', ignoring";
+    }
+  }
   return { cmd_text => join(' ', @cmd) };
 }
 
@@ -700,36 +755,23 @@ sub decompress_cmd_text($)
   return compress_cmd_text($_[0], 1);
 }
 
-sub _assemble_cmd($;$)
+sub _piped_cmd_txt($)
 {
   my $cmd_pipe = shift;
-  my $catch_stderr = shift;
   my $cmd = "";
-
-  # simple single-command
-  if(scalar(@$cmd_pipe) == 1) {
-    $cmd = $cmd_pipe->[0]->{cmd_text};
-    $cmd .= ' 2>&1' if($catch_stderr && $cmd_pipe->[0]->{catch_stderr});
-    return $cmd;
-  }
-
-  # cmd result is something like this:
-  #    { btrfs send <src> 2>&3 | mbuffer | btrfs receive <dst> 2>&3 ; } 3>&1
   my $pipe = "";
-  $cmd = "{ " if($catch_stderr);
-  foreach (@$cmd_pipe) {
-    if($_->{cmd_text} =~ /^>/) {
+  my $last;
+  foreach (map $_->{cmd_text}, @$cmd_pipe) {
+    die if($last);
+    if(/^>/) {
+      # can't be first, must be last
       die unless($pipe);
-      $cmd .= ' ' . $_->{cmd_text};
-      $pipe = undef; # this dies if it is not last command
-    } else {
-      $cmd .= $pipe . $_->{cmd_text};
-      $cmd .= ' 2>&3' if($catch_stderr && $_->{catch_stderr});
-      $pipe = ' | ';
+      $last = 1;
+      $pipe = ' ';
     }
+    $cmd .= $pipe . $_;
+    $pipe = ' | ';
   }
-  $cmd .= ' ; } 3>&1' if($catch_stderr);
-
   return $cmd;
 }
 
@@ -860,7 +902,7 @@ sub run_cmd(@)
 
       my $rsh_text = _safe_cmd($href->{rsh}, \@unsafe_cmd);
       return undef unless(defined($rsh_text));
-      $href->{cmd_text} = $rsh_text . " '" . _assemble_cmd(\@rsh_cmd_pipe) . "'";
+      $href->{cmd_text} = $rsh_text . " '" . _piped_cmd_txt(\@rsh_cmd_pipe) . "'";
     }
 
     # local stream_buffer, rate_limit and show_progress in front of stream sink
@@ -874,7 +916,7 @@ sub run_cmd(@)
      );
   }
 
-  my $cmd = _assemble_cmd(\@cmd_pipe);
+  my $cmd = _piped_cmd_txt(\@cmd_pipe);
 
   if(scalar(@unsafe_cmd)) {
     ERROR "Unsafe command `$cmd` (offending string: " . join(', ', @unsafe_cmd) . ')';
@@ -1914,17 +1956,17 @@ sub system_list_mountinfo($)
   foreach(@$ret)
   {
     # https://www.kernel.org/doc/Documentation/filesystems/proc.txt
-    unless(/^(?<mount_id>[0-9]+)       # mount ID:  unique identifier of the mount (may be reused after umount)
-            \s(?<parent_id>[0-9]+)     # parent ID:  ID of parent (or of self for the top of the mount tree)
-            \s(?<st_dev>[0-9]+:[0-9]+) # major:minor:  value of st_dev for files on filesystem
-            \s(?<fs_root>\S+)          # root:  root of the mount within the filesystem
-            \s(?<mount_point>\S+)      # mount point:  mount point relative to the process's root
-            \s(?<mount_options>\S+)    # mount options:  per mount options
+    unless(/^(?<mount_id>[0-9]+)       # mount ID:         unique identifier of the mount (may be reused after umount)
+            \s(?<parent_id>[0-9]+)     # parent ID:        ID of parent (or of self for the top of the mount tree)
+            \s(?<st_dev>[0-9]+:[0-9]+) # major:minor:      value of st_dev for files on filesystem
+            \s(?<fs_root>\S+)          # root:             root of the mount within the filesystem
+            \s(?<mount_point>\S+)      # mount point:      mount point relative to the process's root
+            \s(?<mount_options>\S+)    # mount options:    per mount options
             (\s\S+)*                   # optional fields:  zero or more fields of the form "tag[:value]"
-            \s-                        # separator:  marks the end of the optional fields
+            \s-                        # separator:        marks the end of the optional fields
             \s(?<fs_type>\S+)          # filesystem type:  name of filesystem of the form "type[.subtype]"
-            \s(?<mount_source>\S+)     # mount source:  filesystem specific information or "none"
-            \s(?<super_options>\S+)$   # super options:  per super block options
+            \s(?<mount_source>\S+)     # mount source:     filesystem specific information or "none"
+            \s(?<super_options>\S+)$   # super options:    per super block options
            /x)
     {
       ERROR "Failed to parse \"$vol->{URL_PREFIX}$file\"";
@@ -1932,15 +1974,24 @@ sub system_list_mountinfo($)
       return undef;
     }
     my %line = %+;
+
     # merge super_options and mount_options to MNTOPS.
-    foreach (split(',', $line{super_options}), split(',', $line{mount_options})) {
+    my %mntops;
+    foreach (split(',', delete($line{super_options})),
+             split(',', delete($line{mount_options})))
+    {
       if(/^(.+?)=(.+)$/) {
-        $line{MNTOPS}->{$1} = $2;
+        $mntops{$1} = $2;
       } else {
-        $line{MNTOPS}->{$_} = 1;
+        $mntops{$_} = 1;
       }
     }
-    $line{MNTOPS}->{rw} = 0 if($line{MNTOPS}->{ro}); # e.g. mount_options="ro", super_options="rw"
+    $mntops{rw} = 0 if($mntops{ro}); # e.g. mount_options="ro", super_options="rw"
+
+    # decode values (octal, e.g. "\040" = whitespace)
+    s/\\([0-7]{3})/chr(oct($1))/eg foreach(values %line, values %mntops);
+
+    $line{MNTOPS} = \%mntops;
     push @mountinfo, \%line;
   }
   # TRACE(Data::Dumper->Dump([\@mountinfo], ["mountinfo"])) if($do_trace && $do_dumper);
@@ -2074,7 +2125,7 @@ sub btrfs_mountpoint
         next;
       }
       unless($mnt->{mount_point} =~ /^$file_match$/) {
-        INFO "Ignoring non-parseable btrfs mountpoint on $vol->{MACHINE_ID}: \"$mnt->{mount_point}\"";
+        INFO_ONCE "Ignoring non-parseable btrfs mountpoint: $vol->{MACHINE_ID}$mnt->{mount_point}";
         next;
       }
       unless($mnt->{MNTOPS}->{subvolid}) {
@@ -3513,8 +3564,8 @@ sub get_receive_targets($$;@)
     else {
       TRACE "get_receive_targets: skip unexpected match: " . _fs_path($_) if($do_trace);
       ${$opts{ret_unexpected}} = 1 if($opts{ret_unexpected});
-      if($opts{warn}) {
-        WARN "Receive target of \"$src_vol->{PRINT}\" exists at unexpected location: " . ($vinfo ? $vinfo->{PRINT} : _fs_path($_));
+      if($opts{warn} && config_key($droot, "warn_unknown_targets")) {
+        WARN "Receive target of \"$src_vol->{PRINT}\" exists at unknown location: " . ($vinfo ? $vinfo->{PRINT} : _fs_path($_));
       }
       next;
     }
@@ -3822,9 +3873,7 @@ sub check_file($$;@)
   my %opts = @_;
   my $sanitize = $opts{sanitize};
   my $error_statement = $opts{error_statement};  # if not defined, no error messages are printed
-
-  my $match = $file_match;
-  $match = $glob_match if($accept->{wildcards});
+  my $match = $accept->{wildcards} ? $glob_match : $file_match;
 
   if($file =~ /^($match)$/) {
     $file = $1;
@@ -3860,9 +3909,8 @@ sub check_file($$;@)
     return undef;
   }
   if($sanitize) {
-    $file =~ s/\/+/\//g;     # sanitize multiple slash
-    $file =~ s/\/\.\//\//g;  # sanitize "/./" -> "/"
-    $file =~ s/\/\.$/\//;    # sanitize trailing "/." -> "/"
+    $file =~ s/\/(\.?\/)+/\//g;  # sanitize "//", "/./" -> "/"
+    $file =~ s/\/\.$/\//;        # sanitize trailing "/." -> "/"
     $file =~ s/\/$// unless($file eq '/');   # remove trailing slash
   }
   return $file;
@@ -3956,6 +4004,7 @@ sub config_compress_hash($$)
     level   => config_key($config, $config_key . "_level"),
     long    => config_key($config, $config_key . "_long"),
     threads => config_key($config, $config_key . "_threads"),
+    adapt   => config_key($config, $config_key . "_adapt"),
   };
 }
 
@@ -5055,34 +5104,41 @@ sub print_formatted(@)
   my $table_format = ref($format_key) ? $format_key : $table_formats{$format_key};
   my $format = $args{output_format} || $output_format || $default_format;
   my $pretty = $args{pretty} // $output_pretty;
-  my $key_defs = $table_format->{$format};
-  my $ralign = $table_format->{RALIGN} // {};
+  my $no_header = $args{no_header};
   my $fh = $args{outfile} // *STDOUT;
   my $table_spacing = 2;
   my $empty_cell_char = $args{empty_cell_char} // "-";
 
+  my @keys;
+  my %ralign;
+  my %hide_column;
   if($format =~ s/^col:\s*(h:)?\s*//) {
-    $args{no_header} = 1 if($1);
-    $key_defs = []; $ralign = {};
+    $no_header = 1 if($1);
     foreach (split(/\s*,\s*/, $format)) {
-      $ralign->{$_} = 1 if s/:R(ALIGN)?$//i;
-      push @$key_defs, lc($_);
+      $ralign{$_} = 1 if s/:R(ALIGN)?$//i;
+      push @keys, lc($_);
     }
   }
-  unless($key_defs) {
-    WARN "Unsupported output format \"$format\", defaulting to \"$default_format\" format.";
-    $key_defs = $table_format->{$default_format} || die;
-    $format = $default_format;
+  else {
+    unless(exists($table_format->{$format})) {
+      WARN "Unsupported output format \"$format\", defaulting to \"$default_format\" format.";
+      $format = $default_format;
+    }
+    @keys   = @{$table_format->{$format}};
+    %ralign = %{$table_format->{RALIGN} // {}};
   }
-  my @keys;
-  my %print_row;
-  foreach (@$key_defs) {
-    my $kd = $_;
-    $print_row{$kd} = 1 unless($kd =~ s/^-//);  # strip leading "-"
-    push @keys, $kd;
-  }
+  # strips leading "-" from @keys
+  %hide_column = map { $_ => 1 } grep { s/^-// } @keys;
 
-  if($format eq "raw")
+  if($format eq "single_column")
+  {
+    # single-column: newline separated values, no headers
+    my $key = $keys[0];
+    foreach (grep defined, map $_->{$key}, @$data) {
+      print $fh $_ . "\n" if($_ ne "");
+    }
+  }
+  elsif($format eq "raw")
   {
     # output: key0="value0" key1="value1" ...
     foreach my $row (@$data) {
@@ -5093,7 +5149,7 @@ sub print_formatted(@)
   elsif(($format eq "tlog") || ($format eq "syslog"))
   {
     # output: value0 value1, ...
-    unless($args{no_header}) {
+    unless($no_header) {
       print $fh join(' ', map uc($_), @keys) . "\n"; # unaligned upper case headings
     }
     foreach my $row (@$data) {
@@ -5108,24 +5164,22 @@ sub print_formatted(@)
   else
   {
     # sanitize and calculate maxlen for each column
-    # NOTE: this is destructive on data!
-    my %maxlen;
-    my @sane_data;
-    foreach my $key (@keys) {
-      $maxlen{$key} = $args{no_header} ? 0 : length($key); # initialize with size of key
-    }
+    my %maxlen = map { $_ => $no_header ? 0 : length($_) } @keys;
+    my @formatted_data;
     foreach my $row (@$data) {
+      my %formatted_row;
       foreach my $key (@keys) {
         my $val = $row->{$key};
-        if(ref $val eq "ARRAY") {
-          $val = join(',', @{$val});
-        }
-        $print_row{$key} = 1 if(defined($val));
+        $val = join(',', @$val) if(ref $val eq "ARRAY");
+
+        $hide_column{$key} = 0 if(defined($val));
         $val = $empty_cell_char if(!defined($val) || ($val eq ""));
-        $row->{$key} = $val;  # write back the sanitized value
+        $formatted_row{$key} = $val;
         $maxlen{$key} = length($val) if($maxlen{$key} < length($val));
       }
+      push @formatted_data, \%formatted_row;
     }
+    my @visible_keys = grep !$hide_column{$_}, @keys;
 
     # print title
     if($title) {
@@ -5134,15 +5188,14 @@ sub print_formatted(@)
     }
 
     # print keys (headings)
-    unless($args{no_header}) {
+    unless($no_header) {
       my $fill = 0;
-      foreach (@keys) {
-        next unless($print_row{$_});
+      foreach (@visible_keys) {
         print $fh ' ' x $fill;
         $fill = $maxlen{$_} - length($_);
         if($pretty) {
            # use aligned lower case headings (with separator line below)
-          if($ralign->{$_}) {
+          if($ralign{$_}) {
             print $fh ' ' x $fill;
             $fill = 0;
           }
@@ -5156,8 +5209,7 @@ sub print_formatted(@)
 
       $fill = 0;
       if($pretty) { # separator line after header
-        foreach (@keys) {
-          next unless($print_row{$_});
+        foreach (@visible_keys) {
           print $fh ' ' x $fill;
           print $fh '-' x $maxlen{$_};
           $fill = $table_spacing;
@@ -5169,14 +5221,13 @@ sub print_formatted(@)
     }
 
     # print values
-    foreach my $row (@$data) {
+    foreach my $row (@formatted_data) {
       my $fill = 0;
-      foreach (@keys) {
-        next unless($print_row{$_});
+      foreach (@visible_keys) {
         my $val = $row->{$_};
         print $fh ' ' x $fill;
         $fill = $maxlen{$_} - length($val);
-        if($ralign->{$_}) {
+        if($ralign{$_}) {
           print $fh ' ' x $fill;
           $fill = 0;
         }
@@ -5338,7 +5389,7 @@ MAIN:
   # while also changing the semantics of the command line options.
   $program_name = $0;
   $program_name =~ s/^.*\///; # remove path
-  my @cmdline_options = (
+  my @getopt_options = (
     # common options
     'help|h'             => sub { VERSION_MESSAGE(); HELP_MESSAGE(0); exit 0; },
     'version'            => sub { VERSION_MESSAGE(); exit 0; },
@@ -5346,12 +5397,13 @@ MAIN:
     'verbose|v'          => sub { $loglevel = ($loglevel =~ /^[0-9]+$/) ? $loglevel+1 : 2; },
     'loglevel|l=s'       => \$loglevel,
     'format=s'           => \$output_format,
+    'single-column|1'    => sub { $output_format = "single_column" },
     'pretty'             => \$output_pretty,
     'config|c=s'         => \$config_cmdline,
     'override=s'         => \@config_override_cmdline,  # e.g. --override=incremental=no
     'lockfile=s'         => \$lockfile_cmdline,
    );
-  push @cmdline_options, ($program_name eq "lsbtr") ? (
+  push @getopt_options, ($program_name eq "lsbtr") ? (
     # "lsbtr" options
     'long|l'             => sub { $output_format = "table" },
     'uuid|u'             => sub { $output_format = "long" },
@@ -5377,7 +5429,7 @@ MAIN:
     'gbytes'             => sub { @output_unit = ("GiB", 1024 * 1024 * 1024        ) },
     'tbytes'             => sub { @output_unit = ("TiB", 1024 * 1024 * 1024 * 1024 ) },
    );
-  unless(GetOptions(@cmdline_options)) {
+  unless(GetOptions(@getopt_options)) {
     VERSION_MESSAGE();
     HELP_MESSAGE(0);
     exit 2;
@@ -5455,6 +5507,7 @@ MAIN:
     $action_archive = 1;
     $fallback_default_config = 1;
     $args_expected_min = $args_expected_max = 2;
+    $subvol_args_allow_relative = 1;
     @subvol_args = @ARGV;
   }
   elsif ($command eq "usage") {
@@ -5465,14 +5518,15 @@ MAIN:
     $action_ls = 1;
     $fallback_default_config = 1;
     $args_expected_min = 1;
-    @subvol_args = @ARGV;
     $subvol_args_allow_relative = 1;
+    @subvol_args = @ARGV;
   }
   elsif ($command eq "diff") {
     $action_diff = 1;
     $fallback_default_config = 1;
     $args_expected_min = $args_expected_max = 2;
     $subvol_args_init = "restrict_same_fs deny_root_subvol";
+    $subvol_args_allow_relative = 1;
     @subvol_args = @ARGV;
   }
   elsif ($command eq "extents") {
@@ -5488,6 +5542,7 @@ MAIN:
     $fallback_default_config = 1;
     $args_expected_min = 1;
     $subvol_args_init = "restrict_same_fs";
+    $subvol_args_allow_relative = 1;
     my $excl;
     foreach(@ARGV) {
       # subvol_arg... "exclusive" filter_arg...
@@ -5503,6 +5558,7 @@ MAIN:
     $action_origin = 1;
     $args_expected_min = $args_expected_max = 1;
     $subvol_args_init = "deny_root_subvol";
+    $subvol_args_allow_relative = 1;
     @subvol_args = @ARGV;
   }
   elsif($command eq "list") {
@@ -5560,18 +5616,10 @@ MAIN:
   # input validation
   foreach (@subvol_args) {
     my ($url_prefix, $path) = check_url($_);
-    if(!defined($path) && $subvol_args_allow_relative) {
+    if(!defined($path) && $subvol_args_allow_relative && ($url_prefix eq "")) {
       # map relative path to absolute
-      $url_prefix = "";
-      if(-d $_) {
-        $path = $1 if($_ =~ /^(.*)$/); # untaint ANY argument, real check below
-        $path = `readlink -f -q '$path'` if(defined($path));
-        $path = check_file($path, { absolute => 1 });
-      }
-      unless(defined($path)) {
-        ERROR "Bad argument: not a valid path: $_";
-        HELP_MESSAGE(0);
-        exit 2;
+      if((-d $_) && ($_ =~ /^(.*)$/)) { # untaint ANY argument!
+        $path = check_file(`readlink -f -q '$1'`, { absolute => 1 })
       }
     }
     unless(defined($path)) {
@@ -5894,6 +5942,12 @@ MAIN:
         if(($mnt->{fs_type} eq "btrfs") &&
            (($root_path =~ /^\Q$mnt_path\E/) || ($mnt_path =~ /^\Q$root_path\E/)))
         {
+          unless(defined(check_file($mnt->{mount_point}, { absolute => 1}))) {
+            ERROR "Ignoring btrfs mount point (unsupported file name): $mnt->{mount_point}";
+            $exit_status = 1;
+            next;
+          }
+
           # we know those are real paths, prevents calling readlink in btrfs_mountpoint
           $realpath_cache{$root_vol->{URL_PREFIX} . $mnt->{mount_point}} = $mnt->{mount_point};
 
@@ -5928,6 +5982,7 @@ MAIN:
               mount_subvol => $mnt->{MNTOPS}{subvol},
               subvolume_path => $svol->{node}{path},
               subvolume_rel_path => $svol->{node}{REL_PATH},
+              url  => $svol->{URL},
               host => $svol->{HOST},
               path => $svol_path,
               flags => ($svol->{node}{readonly} ? "readonly" : undef),
@@ -6545,17 +6600,19 @@ MAIN:
       }
     }
     if($action_list eq "volume") {
-      print_formatted("list_volume", \@vol_data);
+      print_formatted("config_volume", \@vol_data);
     }
     elsif($action_list eq "source") {
-      print_formatted("list_source", \@subvol_data);
+      print_formatted("config_source", \@subvol_data);
     }
     elsif($action_list eq "target") {
-      print_formatted("list_target", \@target_data);
+      print_formatted("config_target", \@target_data);
+    }
+    elsif($action_list eq "config") {
+      print_formatted("config", \@mixed_data);
     }
     else {
-      # default format
-      print_formatted("list", \@mixed_data);
+      die "unknown action_list=$action_list";
     }
     exit exit_status($config);
   }
@@ -6834,6 +6891,12 @@ MAIN:
     }
     elsif($action_resolve eq "snapshots") {
       print_formatted("snapshots", \@data);
+    }
+    elsif($action_resolve eq "backups") {
+      print_formatted("backups", \@data);
+    }
+    elsif($action_resolve eq "latest") {
+      print_formatted("latest", \@data);
     }
     else {
       print_formatted("resolved", \@data);
