@@ -77,7 +77,7 @@ set -u
 set -e
 set -o pipefail
 
-btrbk_version_min='0.28.0'
+btrbk_version_min='0.32.0'
 
 # defaults: ignore subvol dirs and root folder timestamp change
 ignore_nested_subvolume_dir=1
@@ -107,8 +107,8 @@ options:
    --ignore-xattrs       ignore xattrs when verifying subvolumes
    --ssh-identity FILE   override ssh_identity from btrbk.conf(5) with FILE,
                          and clear all other ssh_* options (use with --ssh-user)
-   --ssh-user USER       override ssh_user from btrbk.conf(5) with USER
-                         (only in conjunction with --ssh-identity)
+   --ssh-user USER       override ssh_user from btrbk.conf(5) with USER, and
+                         clear all other ssh_* options(use with --ssh-identity)
    --ssh-agent           start ssh-agent(1) and add identity
 
 commands:
@@ -157,7 +157,6 @@ while [[ "$#" -ge 1 ]]; do
           ;;
       --ssh-identity)
           # use different ssh identity (-i option) for rsync rsh.
-          # if set, ssh_user defaults to root.
           # NOTE: this overrides all btrbk ssh_* options
           ssh_identity="$2"
           shift
@@ -267,11 +266,14 @@ rsync_rsh()
     local rsh_match="(.*) ([a-z0-9_-]+)@([a-zA-Z0-9.-]+)$"
 
     if [[ -z "$rsh" ]]; then
-        echo
-    elif [[ -n "$ssh_identity" ]]; then
+        return
+    elif [[ -n "$ssh_user" ]] || [[ -n "$ssh_identity" ]]; then
         # override btrbk.conf from command line arguments
         log_debug "Overriding all ssh_* options from btrbk.conf"
-        echo "ssh -q -i $ssh_identity -l $ssh_user"
+        local cmd="ssh -q"
+        [[ -n "$ssh_identity" ]] && cmd="$cmd -i '$ssh_identity'"
+        [[ -n "$ssh_user" ]] && cmd="$cmd -l '$ssh_user'"
+        echo "$cmd"
     elif [[ $rsh =~ $rsh_match ]]; then
         echo "${BASH_REMATCH[1]} -l ${BASH_REMATCH[2]}"
     else
@@ -302,7 +304,7 @@ start_ssh_agent()
 
 eval_btrbk_resolved_line()
 {
-    local line=$1
+    local line=" $1"
     local prefix=$2
     local required_keys=$3
     # reset all variables first
@@ -311,25 +313,13 @@ eval_btrbk_resolved_line()
     done
     for vv in $required_keys; do
         # basic input validation, set prefixed variable (eval)
-        local var_assignment=$(echo "$line" | grep -Eo "${vv}"'="[^"]*"')
-        if [[ $? -ne 0 ]] || [[ -z "$var_assignment" ]]; then
-            if [[ $vv == "target_type" ]]; then
-                # hack for btrbk <= 0.27.2 bug: missing "target_type" in $table_formats{resolved}
-                # hardcode send-receive type, this results in rsync failing on raw targets with:
-                # rsync: ERROR: cannot stat destination "xxx.btrfs.xz.gpg/": Not a directory (20)
-                eval "${prefix}target_type=\"send-receive\"" || return 1
-                continue
-            fi
-            if [[ $vv == "target_rsh" ]] && [[ -z "$R_target_host" ]]; then
-                # hack for btrbk <= 0.27.2 bug: missing "target_rsh" in $table_formats{resolved}
-                # note that target_rsh is not needed if target_host is not set.
-                # variable has already been reset above, continue
-                continue
-            fi
-            log_line "btrbk-verify: missing required variable \"${vv}\" in btrbk --format=raw line"
+        local match=" ${vv}='([^']*('\\\\''[^']*)*)'"
+        if [[ $line =~ $match ]] ; then
+            eval "${prefix}${vv}='${BASH_REMATCH[1]}'" || return 1
+        else
+            log_line "btrbk-verify: ERROR: Missing variable \"${vv}\""
             return 1
         fi
-        eval "${prefix}${var_assignment}" || return 1
     done
 }
 
@@ -338,10 +328,6 @@ exit_trap_action()
     [[ -n "${ssh_agent_running:-}" ]] && kill_ssh_agent
     [[ $verbose -gt 0 ]] && tlog_print
 }
-
-# restrictions from rsync_rsh():
-[[ -z "$ssh_identity" ]] && [[ -n "$ssh_user" ]] && print_usage 2
-[[ -n "$ssh_identity" ]] && [[ -z "$ssh_user" ]] && print_usage 2
 
 # start ssh-agent(1)
 [[ -n "$ssh_start_agent" ]] && start_ssh_agent
@@ -371,20 +357,22 @@ while read -r btrbk_list_line; do
     log_debug "Evaluating [btrbk list] line: $btrbk_list_line"
     [[ -z "$btrbk_list_line" ]] && continue
     if ! eval_btrbk_resolved_line "$btrbk_list_line" \
-         "R_" "snapshot_path target_path source_host target_host target_type source_rsh target_rsh"
+         "R_" "snapshot_subvolume target_subvolume source_host target_host target_type source_rsh target_rsh"
     then
-        log_line "btrbk-verify: WARNING: Skipping task (parse error). Make sure to have >=btrbk-${btrbk_version_min} installed!"
-        continue
+        log_line "btrbk-verify: ERROR: Parse error of command output: ${btrbk_cmd[@]}"
+        log_line "Make sure to have >=btrbk-${btrbk_version_min} installed!"
+        exitstatus=1
+        break
     fi
 
-    source="${R_snapshot_path}"
-    target="${R_target_path}"
+    source="${R_snapshot_subvolume}/"
+    target="${R_target_subvolume}/"
     [[ -n "$R_source_host" ]] && source="${R_source_host}:${source}"
     [[ -n "$R_target_host" ]] && target="${R_target_host}:${target}"
 
-    if [[ -z "$R_snapshot_path" ]]; then
+    if [[ -z "$R_snapshot_subvolume" ]]; then
         log_line "WARNING: Skipping task (missing snapshot): target=$target"
-    elif [[ -z "$R_target_path" ]]; then
+    elif [[ -z "$R_target_subvolume" ]]; then
         log_line "Skipping task (no target): source=$source"
     elif [[ "$R_target_type" != "send-receive" ]]; then
         log_line "Skipping task (target_type=$R_target_type): source=$source, target=$target"
@@ -396,10 +384,11 @@ while read -r btrbk_list_line; do
         # rsync rsh is either source_rsh or target_rsh or empty
         eff_rsh="$R_source_rsh"
         [[ -z "$eff_rsh" ]] && eff_rsh="$R_target_rsh"
+        eff_rsh=$(rsync_rsh "$eff_rsh")
 
         rsync_cmd=("rsync" "${rsync_args[@]}")
-        [[ -n "$eff_rsh" ]] && rsync_cmd+=(-e "$(rsync_rsh "$eff_rsh")")
-        rsync_cmd+=("${source}/" "${target}/")
+        [[ -n "$eff_rsh" ]] && rsync_cmd+=("-e" "$eff_rsh")
+        rsync_cmd+=("${source}" "${target}")
         log_cmd "${rsync_cmd[@]}"
         [[ -n "$dryrun" ]] && rsync_cmd=("cat" "/dev/null")
 

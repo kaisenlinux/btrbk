@@ -1,7 +1,7 @@
 btrbk.conf(5)
 =============
-:date: 2021-08-07
-:release-version: 0.31.3
+:date: 2022-02-05
+:release-version: 0.32.0
 :man manual: Btrbk Manual
 :man source: Btrbk {release-version}
 
@@ -36,34 +36,21 @@ global options must be set before any sections are defined.
 Blank lines are ignored. A hash character (#) starts a comment
 extending until end of line.
 
-Whitespace or unicode characters are not allowed for file
-names. Allowed characters are:
-
-    [0-9] [a-z] [A-Z] and "._+-@"
-
-This is for sanity/safety/security reasons, we apologize for the
-inconvenience.
-
 
 SECTIONS
 --------
 
-*volume* <volume-directory>|<url>::
-    Directory of a btrfs volume containing the source subvolume(s) to
-    be backed up. '<volume-directory>' must be an absolute path and
-    point to a btrfs volume (or subvolume). Usually the mount point of
-    a btrfs filesystem mounted with the 'subvolid=5' option.
+*volume* <volume-directory>|<url> (optional)::
+    Absolute path pointing to a btrfs file system containing the
+    source subvolume(s) to be backed up. Usually the mount point of a
+    btrfs filesystem mounted with the 'subvolid=5' option.
 
 *subvolume* <subvolume-name>::
-    Subvolume to be backed up, relative to the '<volume-directory>'
-    specified in the 'volume' section. Multiple 'subvolume' sections
-    are allowed within 'volume' sections. Accepts wildcard character
-    "*".
+    Subvolume to be backed up, relative to the '<volume-directory>' of
+    the 'volume' section, or absolute if the 'volume' section is
+    omitted. Accepts wildcard character "*".
 +
 --
-If set to ".", the subvolume at '<volume-directory>' is used as backup
-source, and the snapshots will be created within the source subvolume
-itself (see 'snapshot_dir' option below), which is not recommended.
 Note that if this subvolume is btrfs root (id=5), it needs to have a
 valid UUID, which is not the case for file systems created with
 btrfs-progs < 4.16.
@@ -109,7 +96,7 @@ otherwise.
 
 *timestamp_format* short|long|long-iso::
     Timestamp format used as postfix for new snapshot subvolume
-    names. Defaults to ``short''.
+    names. Defaults to ``long''.
 +
 --
 ifndef::backend-docbook,backend-manpage[]
@@ -129,12 +116,13 @@ snapshots are created during a daylight saving time clock
 change).
 +
 Note that using ``long-iso'' has implications on the scheduling, see
-<<_retention_policy,RETENTION POLICY>> (caveats) below.
+<<_reference_time,Reference Time>> below.
 
 *snapshot_dir* <directory>::
     Directory in which the btrfs snapshots are created, relative to
-    '<volume-directory>' of the 'volume' section. Note that btrbk does
-    not automatically create this directory, and the snapshot creation
+    '<volume-directory>' of the 'volume' section, or absolute if the
+    'volume' section is omitted. Note that btrbk does not
+    automatically create this directory, and the snapshot creation
     will fail if it is not present.
 
 *snapshot_name* <basename>::
@@ -427,24 +415,57 @@ If you want to set this option for regular (non-root) user only, set
     If set, make sure the deletion of snapshot and backup subvolumes
     are committed to disk when btrbk terminates. Defaults to ``no''.
 
-*incremental_clones* <number>::
-    Maximum number of clone sources allowed for incremental send. If
-    set, btrbk adds "-c <clone-src>" to the btrfs-send(8) command for
-    all present snapshot/backup pairs (correlated subvolumes matching
-    matching 'received_uuid', printed by "btrbk stats"). Set this to a
-    high number if you want to make sure that no common data is missed
-    on incremental backups, in expense of btrfs-send
-    performance. Defaults to 0.
+*incremental_prefs* <list-spec>[:<amount>]...::
+    Specify the preferences to determine the best common (correlated)
+    parent and clone sources for incremental backups, by choosing from
+    predefined candidate lists.
++
+--
+The 'list-spec' defines from what candidate list the next
+parent/clone-src should be appended to a result list; 'amount' defines
+how many (e.g. "sro:1 sro:1" is identical to "sro:2"), or all if
+omitted. Any candidate which is already in the results is dropped.
+
+The resulting list of subvolumes is then used as parameters for the
+btrfs-send(8) command: the first for "-p <parent>", all others for
+"-c <clone-src>".
+
+Available 'list-spec' (candidate lists = filtered subsets of
+correlated subvolumes):
+
+*sro*,*srn*:: All from 'snapshot_dir' matching 'snapshot_name', with
+ parent_uuid relationship, sorted by btrbk timestamp (o=older
+ n=newer).
+
+*sao*,*san*:: All from 'snapshot_dir' matching 'snapshot_name', sorted
+ by btrbk timestamp (o=older n=newer).
+
+*aro*,*arn*:: All from 'incremental_resolve', with parent_uuid
+ relationship, sorted by cgen (o=older n=newer).
+
+Defaults to "sro:1 srn:1 sao:1 san:1 aro:1 arn:1". Note that for
+most operations the default resolves a single parent, as there usually
+are no newer snapshots, and all "sro:1 sao:1 aro:1" resolve to the
+same snapshot.
+
+Example: "defaults,sao,san,aro,arn" takes the defaults, and adds clone
+sources for all (!) known candidates on the filesystem.
+--
+
+*incremental_clones* yes|no::
+    If enabled, btrbk adds "-c <clone-src>" to the btrfs-send(8)
+    command for all correlated subvolumes resolved by
+    'incremental_prefs'. If disabled, only "-p <parent>" is
+    used. Defaults to ``yes''.
 
 *incremental_resolve* mountpoint|directory::
     Specifies where to search for the best common parent for
     incremental backups. If set to ``mountpoint'', use parents in the
-    filesystem tree below mount points of source
-    "<volume-directory>/<snapshot-dir>" and target
-    "<target-directory>". If set to ``directory'', use parents
-    strictly below source/target directories. Set this to
-    ``directory'' if you get access problems (when not running btrbk
-    as root). Defaults to ``mountpoint''.
+    filesystem tree below the mount point of the snapshot and target
+    directory. If set to ``directory'', use parents strictly below
+    snapshot/target directories. Set this to ``directory'' if you get
+    access problems (when not running btrbk as root). Defaults to
+    ``mountpoint''.
 
 *snapshot_qgroup_destroy* yes|no  _*experimental*_:: {blank}
 *target_qgroup_destroy* yes|no  _*experimental*_:: {blank}
@@ -466,20 +487,23 @@ If you want to set this option for regular (non-root) user only, set
 RETENTION POLICY
 ----------------
 
-btrbk uses separate retention policies for snapshots and backups,
-which are defined by the 'snapshot_preserve_min', 'snapshot_preserve',
-'target_preserve_min', 'target_preserve', 'preserve_day_of_week' and
-'preserve_hour_of_day' configuration options.
+Retention policies are defined individually for snapshots, backups and
+archives (summarized as "backups" in the following text), using a
+combination of:
 
-Within this section, any statement about "backups" is always valid for
-backups as well as snapshots, referring to 'target_preserve' or
-'snapshot_preserve' respectively.
+**_preserve_min* all|latest|no|<number>{h,d,w,m,y}::
+    Amount of time (duration) in which all backups are preserved.
+
+**_preserve* no|<retention_policy>::
+    Schedule (single points in time) for which individual backups are
+    preserved.
+
+Note that if "preserve_min" is set to ``all'' (the default), any
+setting of "preserve" obviously has no effect.
 
 The format for '<retention_policy>' is:
 
     [<hourly>h] [<daily>d] [<weekly>w] [<monthly>m] [<yearly>y]
-
-With the following semantics:
 
 *hourly*::
     Defines how many hours back hourly backups should be
@@ -513,29 +537,31 @@ Use an asterisk for ``all'' (e.g. "target_preserve 60d *m"
 states: "preserve daily backups for 60 days back, and all monthly
 backups").
 
-The reference time (which defines the beginning of a day, week, month
-or year) for all date/time calculations is the local time of the host
-running btrbk.
-
 Hint: Run btrbk with the '-S', '--print-schedule' option to get a
 comprehensive output of the scheduler results.
 
-Caveats:
 
-* If you run a setup with several btrbk instances (e.g. one
-  snapshot-only instance per remote client, and a separate fetch-only
-  instance on the backup server), it makes perfectly sense to run
-  btrbk with different local time on the clients, in order to make
-  sure the backups from all the remote hosts are preserved for
-  "midnight", and not at "00:00 UTC" (which would be "14:00" in
-  Honolulu). If you want this behavior, do NOT use "timestamp_format
-  long-iso".
+=== Reference Time
 
-* If "timestamp_format long-iso" is set, running btrbk from different
-  time zones leads to different interpretation of "first in day, week,
-  month, or year". Make sure to run btrbk with the same time zone on
-  every host, e.g. by setting the TZ environment variable (see
-  tzset(3)).
+The local time on the host running btrbk defines the reference time
+for all date/time calculations, especially for "beginning of a day",
+and as a consequence for the first daily, weekly, monthly or yearly
+backups. The local time on remote hosts (ssh source/target) is never
+used.
+
+Unless "timestamp_format long-iso" is set, daily backups are preserved
+at "preserve_hour_of_day" (defaults to midnight) of the respective
+time zone (and not for "00:00 UTC", which would be "14:00" in
+Honolulu). This becomes relevant for setups with multiple btrbk
+instances, e.g. many snapshot-only instances (spread around the
+world), and a fetch-only instance on the backup server.
+
+Caveat:
+
+* If "timestamp_format long-iso" is set, each btrbk instance on has a
+  different interpretation of "first in day". Make sure to run btrbk
+  with the same time zone on every host, e.g. by setting the TZ
+  environment variable (see tzset(3)).
 
 
 TARGET TYPES
@@ -544,9 +570,8 @@ TARGET TYPES
 *send-receive*::
     Backup to a btrfs filesystem, using "btrfs send/receive". This is
     the recommended (standard) target type. The '<target-directory>'
-    must be an absolute path and point to a btrfs volume (or
-    subvolume), or to a directory within a subvolume. See
-    btrfs-send(8), btrfs-receive(8).
+    must be an absolute path and point to a subvolume or directory
+    within a btrfs file system. See btrfs-send(8), btrfs-receive(8).
 
 *raw*  _*experimental*_::
     Backup to a raw (filesystem independent) file from the output of

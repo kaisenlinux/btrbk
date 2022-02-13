@@ -59,7 +59,7 @@ For more information, read the [installation documentation].
 
   [btrfs-progs]: https://www.kernel.org/pub/linux/kernel/people/kdave/btrfs-progs/
   [Perl interpreter]: https://www.perl.org
-  [OpenSSH]: https://www.openssh.org
+  [OpenSSH]: https://www.openssh.com
   [mbuffer]: https://www.maier-komor.de/mbuffer.html
 
 
@@ -83,7 +83,7 @@ with this package. For a detailed description, please consult the
 After a configuration change, it is highly recommended to check it by
 running btrbk with the `-n,--dryrun` option:
 
-    btrbk -c /path/to/myconfig -v -n run
+    # btrbk -c /path/to/myconfig -v -n run
 
 This will read all btrfs information on the source/target filesystems
 and show what actions would be performed (without writing anything to
@@ -93,8 +93,8 @@ The examples below assume that the btrfs subvolume containing `home`
 and `rootfs` is mounted at `/mnt/btr_pool`. This is usually the btrfs
 root subvolume, which always has `subvolid=5`.
 
-Note that mounting subvolid=5 is *mandatory* if you want to backup
-your root filesystem `/`.
+Mounting `subvolid=5` is *recommended* (mandatory for btrbk < v0.32.0)
+if you want to backup your root filesystem `/`.
 
 /etc/fstab:
 
@@ -103,7 +103,7 @@ your root filesystem `/`.
 Note that some default btrfs installations (e.g. Ubuntu) use subvolume
 names `@` for rootfs (mounted at `/`) and `@home` for `/home`, as a
 naming convention. If this is the case on your file system, replace
-the `subvolume` delcarations in the examples accordingly.
+the `subvolume` declarations in the examples accordingly.
 
   [btrbk.conf(5)]: https://digint.ch/btrbk/doc/btrbk.conf.5.html
 
@@ -137,15 +137,28 @@ manage snapshots located on the same volume in `snapshot_dir`. Btrbk
 does not create subdirs by default, the snapshot directory must first
 be created manually:
 
-    sudo mkdir /mnt/btr_pool/btrbk_snapshots
+    # mkdir /mnt/btr_pool/btrbk_snapshots
+
+The "volume" section is merely used as a specifier for a base
+directory, and can be skipped if you prefer to configure everything
+using absolute paths. The above configuration can also be written as:
+
+    snapshot_dir /mnt/btr_pool/btrbk_snapshots
+    subvolume    /mnt/btr_pool/home
+
+If you don't want to mount the btrfs root filesystem to
+`/mnt/btr_pool`, you might as well configure it like this:
+
+    snapshot_dir /btrbk_snapshots
+    subvolume    /home
 
 Start a dry run:
 
-    sudo btrbk run -n
+    # btrbk run -n
 
 Create the first snapshot:
 
-    sudo btrbk run
+    # btrbk run
 
 If it works as expected, configure a cron job to run btrbk hourly:
 
@@ -434,7 +447,7 @@ will need the `btrfs` executable from the [btrfs-progs] package.
 On the client side, create a ssh key dedicated to btrbk, without
 password protection:
 
-    ssh-keygen -t rsa -b 4096 -f /etc/btrbk/ssh/id_rsa -C btrbk@mydomain.com -N ""
+    # ssh-keygen -t rsa -b 4096 -f /etc/btrbk/ssh/id_rsa -C btrbk@mydomain.com -N ""
 
 The content of the public key (/etc/btrbk/ssh/id_rsa.pub) is used for
 authentication in "authorized_keys" on the server side (see [sshd(8)]

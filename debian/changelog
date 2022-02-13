@@ -1,3 +1,9 @@
+btrbk (0.32.0-1kaisen) kaisen-packages; urgency=medium
+
+  * Import 0.32.0 version
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Sun, 13 Feb 2022 15:22:16 +0100
+
 btrbk (0.31.3-1kaisen) kaisen-packages; urgency=medium
 
   * Refresh quilt patchs

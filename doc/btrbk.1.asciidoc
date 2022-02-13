@@ -1,7 +1,7 @@
 btrbk(1)
 ========
-:date: 2021-08-07
-:release-version: 0.31.3
+:date: 2022-02-05
+:release-version: 0.32.0
 :man manual: Btrbk Manual
 :man source: Btrbk {release-version}
 
@@ -25,7 +25,7 @@ btrbk [-h|--help] [--version]
       [-S|--print-schedule] [--progress]
       [--lockfile <file>]
       [--override <config_option>=<value>]
-      <command> [<args>]
+      <command> [[--] <filter>...]
 
 
 DESCRIPTION
@@ -132,7 +132,7 @@ OPTIONS
 
 --format table|long|raw|col:[h:]<columns>::
     Print output in specified format. If set to "raw", prints
-    space-separated key="value" pairs (machine readable).
+    space-separated, quoted key=value pairs (machine readable).
 +
 If set to "col:", prints only the <columns> specified (comma-separated
 list). Header lines are ommitted if the "h:" modifier is present.
