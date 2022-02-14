@@ -14,7 +14,7 @@ Vcs-Browser: https://gitlab.com/kaisenlinux/packages/btrbk
 
 Package: btrbk
 Architecture: all
-Depends: perl, btrfs-progs (>= 3.18.2), ${misc:Depends}
+Depends: perl, btrfs-progs (>= 3.18.2), ${misc:Depends}, ${perl:Depends}
 Recommends: openssh-client, pv, mbuffer
 Suggests:
  openssl,

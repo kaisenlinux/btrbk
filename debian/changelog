@@ -1,3 +1,10 @@
+btrbk (0.32.0-2kaisen) kaisen-packages; urgency=medium
+
+  * Add --no-enable systemd when service is installed
+  * Add perl:Depends variable
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Mon, 14 Feb 2022 00:06:56 +0100
+
 btrbk (0.32.0-1kaisen) kaisen-packages; urgency=medium
 
   * Import 0.32.0 version
