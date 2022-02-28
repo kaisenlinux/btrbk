@@ -2,7 +2,7 @@
 #
 # btrbk - Create snapshots and remote backups of btrfs subvolumes
 #
-# Copyright (C) 2014-2021 Axel Burri
+# Copyright (C) 2014-2022 Axel Burri
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -33,8 +33,9 @@ use Getopt::Long qw(GetOptions);
 use Time::Local qw( timelocal timegm timegm_nocheck );
 use IPC::Open3 qw(open3);
 use Symbol qw(gensym);
+use Cwd qw(abs_path);
 
-our $VERSION         = '0.32.0';
+our $VERSION         = '0.32.1';
 our $AUTHOR          = 'Axel Burri <axel@tty0.ch>';
 our $PROJECT_HOME    = '<https://digint.ch/btrbk/>';
 
@@ -136,10 +137,10 @@ my %config_options = (
   group                       => { default => undef,     accept_regexp => qr/^$group_match($split_match$group_match)*$/, allow_multiple => 1, split => $split_match },
   noauto                      => { default => undef,     accept => [ "yes", "no" ] },
 
-  backend                     => { default => "btrfs-progs", accept => [       "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo" ] },
-  backend_local               => { default => undef,         accept => [ "no", "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo" ] },
-  backend_remote              => { default => undef,         accept => [ "no", "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo" ] },
-  backend_local_user          => { default => undef,         accept => [ "no", "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo" ] },
+  backend                     => { default => "btrfs-progs", accept => [       "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo", "btrfs-progs-doas" ] },
+  backend_local               => { default => undef,         accept => [ "no", "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo", "btrfs-progs-doas" ] },
+  backend_remote              => { default => undef,         accept => [ "no", "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo", "btrfs-progs-doas" ] },
+  backend_local_user          => { default => undef,         accept => [ "no", "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo", "btrfs-progs-doas" ] },
 
   compat                      => { default => undef,     accept => [ "no", "busybox" ] },
   compat_local                => { default => undef,     accept => [ "no", "busybox" ] },
@@ -308,26 +309,24 @@ my %table_formats = (
   },
 );
 
+my @btrfs_cmd = (
+  "btrfs subvolume list",
+  "btrfs subvolume show",
+  "btrfs subvolume snapshot",
+  "btrfs subvolume delete",
+  "btrfs send",
+  "btrfs receive",
+  "btrfs filesystem usage",
+  "btrfs qgroup destroy",
+);
+my @system_cmd = (
+  "readlink",
+  "test",
+);
 my %backend_cmd_map = (
-  "btrfs-progs-btrbk" => { "btrfs subvolume list"     => [ "btrfs-subvolume-list"     ],
-                           "btrfs subvolume show"     => [ "btrfs-subvolume-show"     ],
-                           "btrfs subvolume snapshot" => [ "btrfs-subvolume-snapshot" ],
-                           "btrfs subvolume delete"   => [ "btrfs-subvolume-delete"   ],
-                           "btrfs send"               => [ "btrfs-send"               ],
-                           "btrfs receive"            => [ "btrfs-receive"            ],
-                           "btrfs filesystem usage"   => [ "btrfs-filesystem-usage"   ],
-                           "btrfs qgroup destroy"     => [ "btrfs-qgroup-destroy"     ],
-                         },
-  "btrfs-progs-sudo" =>  { "btrfs subvolume list"     => [ "sudo", "-n", "btrfs", "subvolume", "list"     ],
-                           "btrfs subvolume show"     => [ "sudo", "-n", "btrfs", "subvolume", "show"     ],
-                           "btrfs subvolume snapshot" => [ "sudo", "-n", "btrfs", "subvolume", "snapshot" ],
-                           "btrfs subvolume delete"   => [ "sudo", "-n", "btrfs", "subvolume", "delete"   ],
-                           "btrfs send"               => [ "sudo", "-n", "btrfs", "send"                  ],
-                           "btrfs receive"            => [ "sudo", "-n", "btrfs", "receive"               ],
-                           "btrfs filesystem usage"   => [ "sudo", "-n", "btrfs", "filesystem", "usage"   ],
-                           "btrfs qgroup destroy"     => [ "sudo", "-n", "btrfs", "qgroup", "destroy"     ],
-                           "readlink"                 => [ "sudo", "-n", "readlink"                       ],
-                         },
+  "btrfs-progs-btrbk" => { map +( $_ => [ s/ /-/gr ] ), @btrfs_cmd },
+  "btrfs-progs-sudo"  => { map +( $_ => [ qw( sudo -n ), split(" ", $_) ] ), @btrfs_cmd, @system_cmd },
+  "btrfs-progs-doas"  => { map +( $_ => [ qw( doas -n ), split(" ", $_) ] ), @btrfs_cmd, @system_cmd },
 );
 
 # keys used in raw target sidecar files (.info):
@@ -2023,9 +2022,7 @@ sub system_realpath($)
 {
   my $vol = shift // die;
   my $path = $vol->{PATH} // die;
-  my $compat = (($vol->{HOST} && config_key($vol, "compat_remote")) //
-                config_key($vol, "compat_local") //
-                config_key($vol, "compat")) // "" eq "busybox";
+  my $compat = config_key_lru($vol, "compat", "busybox");
   my @options = ("-v");                # report error messages
   push @options, "-e" unless($compat); # all components must exist (not available in busybox!)
   push @options, "-f" if($compat);     # all but the last component must exist.
@@ -2836,26 +2833,9 @@ sub vinfo_cmd($$@)
   my $vinfo = shift || die;
   my $cmd = shift || die;
   my @cmd_args = @_;
-  my $ret;
-  my $backend;
-  if(defined($vinfo->{HOST})) {
-    $backend //= config_key($vinfo, "backend_remote");
-  } else {
-    $backend //= config_key($vinfo, "backend_local_user") if($>); # $EUID, $EFFECTIVE_USER_ID
-    $backend //= config_key($vinfo, "backend_local");
-  }
-  $backend //= config_key($vinfo, "backend") // die;
-  my $cmd_mapped = $backend_cmd_map{$backend}{$cmd};
-  if(defined($cmd_mapped)) {
-    TRACE "vinfo_cmd: found mapping for backend=$backend cmd=\"$cmd\": " . join(' ', @$cmd_mapped) if($do_trace);
-    $ret = [ @$cmd_mapped, @cmd_args ];
-  }
-  else {
-    my @ret_cmd = split(/\s/, $cmd);
-    TRACE "vinfo_cmd: no mapping found for backend=$backend cmd=\"$cmd\", assuming btrfs-progs: " . join(' ', @ret_cmd) if($do_trace);
-    $ret = [ @ret_cmd, @cmd_args ];
-  }
-  return $ret;
+  my $backend = config_key_lru($vinfo, "backend") // die;
+  my $cmd_mapped = $backend_cmd_map{$backend}{$cmd} // [ split(" ", $cmd) ];
+  return [ @$cmd_mapped, @cmd_args ];
 }
 
 sub _get_btrbk_date(@)
@@ -2958,7 +2938,8 @@ sub mountinfo_tree($)
   my %id = map +( $_->{mount_id} => $_ ), @$mountinfo;
   my $tree_root;
   foreach my $node (@$mountinfo) {
-    if(my $parent = $id{$node->{parent_id}}) {
+    my $parent = $id{$node->{parent_id}};
+    if($parent && ($node->{mount_id} != $node->{parent_id})) {
       $node->{PARENT} = $parent;
       push @{$parent->{SUBTREE}}, $node;
     } else {
@@ -3899,28 +3880,50 @@ sub check_url($;@)
 }
 
 
-sub config_key($$;@)
+sub config_key($$;$)
 {
   my $config = shift || die;
   my $key = shift || die;
-  my %opts = @_;
-  my $orig_config = $config;
+  my $match = shift;
   $config = $config->{CONFIG} if($config->{CONFIG});  # accept vinfo for $config
 
+  my $val;
   if(exists($config_override{$key})) {
     TRACE "config_key: OVERRIDE key=$key to value=" . ($config_override{$key} // "<undef>") if($do_trace);
-    return $config_override{$key};
+    $val = $config_override{$key};
   }
+  else {
+    while(not exists($config->{$key})) {
+      # note: while all config keys exist in "meta" context (at least with default values),
+      #       we also allow fake configs (CONTEXT="cmdline") which have no PARENT.
+      return undef unless($config->{PARENT});
+      $config = $config->{PARENT};
+    }
+    $val = $config->{$key};
+  }
+  return undef unless defined($val);
+  return $val unless defined($match);
 
-  while(not exists($config->{$key})) {
-    # note: while all config keys exist in "meta" context (at least with default values),
-    #       we also allow fake configs (CONTEXT="cmdline") which have no PARENT.
-    return undef unless($config->{PARENT});
-    $config = $config->{PARENT};
+  if(ref($val) eq "ARRAY") {
+    return grep(/^$match$/, @$val) ? $match : undef;
+  } else {
+    return ($val eq $match) ? $match : undef;
   }
-  my $retval = $config->{$key};
-  $retval = $opts{prefix} . $retval if(defined($opts{prefix}) && defined($retval));
-  $retval .= $opts{postfix} if(defined($opts{postfix}) && defined($retval));
+}
+
+
+sub config_key_lru($$;$) {
+  my $vinfo = shift || die;
+  my $key = shift || die;
+  my $match = shift;
+  my $retval;
+  if(defined($vinfo->{HOST})) {
+    $retval //= config_key($vinfo, $key . "_remote", $match);
+  } else {
+    $retval //= config_key($vinfo, $key . "_local_user", $match) if($>); # $EUID, $EFFECTIVE_USER_ID
+    $retval //= config_key($vinfo, $key . "_local", $match);
+  }
+  $retval //= config_key($vinfo, $key, $match);
   return $retval;
 }
 
@@ -5584,11 +5587,7 @@ MAIN:
   foreach (@subvol_args) {
     my ($url_prefix, $path) = check_url($_);
     if(!defined($path) && $subvol_args_allow_relative && ($url_prefix eq "") && (-d $_)) {
-      unless(eval_quiet { require File::Spec; }) {
-        ERROR "Cannot handle relative paths (perl version too old; missing File::Spec module): $_";
-        exit 2;
-      }
-      $path = check_file(File::Spec->rel2abs($_), { absolute => 1 });
+      $path = check_file(abs_path($_), { absolute => 1, sanitize => 1 });
     }
     unless(defined($path)) {
       ERROR "Bad argument: not a subvolume declaration: $_";
@@ -5905,6 +5904,7 @@ MAIN:
           my $svol_path = $svol->{PATH};
           $svol_path =~ s/^\/\//\//;  # sanitize "//" (see vinfo_child)
 
+          next unless($root_path eq "/" || $svol_path =~ /^\Q$root_path\E(\/|\z)/);
           if(_find_mountpoint($mnt, $svol_path) ne $mnt) {
             DEBUG "Subvolume is hidden by another mount point: $svol->{PRINT}";
             next;
@@ -6437,7 +6437,7 @@ MAIN:
       return unless($mountpoint);
       my $mount_source = $mountpoint->{mount_source};
       my $mid = $vol->{MACHINE_ID} . $mount_source;
-      $usage_cache{$mid} //= btrfs_filesystem_usage($vol);
+      $usage_cache{$mid} //= btrfs_filesystem_usage(vinfo($vol->{URL_PREFIX} . $mountpoint->{mount_point}, $vol->{CONFIG})) // {};
       push @data, { %{$usage_cache{$mid}},
                     type => $type,
                     mount_source => $mount_source,
@@ -6447,13 +6447,13 @@ MAIN:
     };
     foreach my $sroot (vinfo_subsection($config, 'volume')) {
       foreach my $svol (vinfo_subsection($sroot, 'subvolume')) {
-        $push_data->(vinfo_snapshot_root($svol), "source");
+        $push_data->($svol, "source");
         foreach my $droot (vinfo_subsection($svol, 'target')) {
           $push_data->($droot, "target");
         }
       }
     }
-    @data = sort { $a->{type} cmp $b->{type} || $a->{url} cmp $b->{url} } @data;
+    @data = sort { $a->{url} cmp $b->{url} } @data;
     print_formatted("usage", \@data);
     exit exit_status($config);
   }

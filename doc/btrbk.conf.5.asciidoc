@@ -1,7 +1,7 @@
 btrbk.conf(5)
 =============
-:date: 2022-02-05
-:release-version: 0.32.0
+:date: 2022-02-26
+:release-version: 0.32.1
 :man manual: Btrbk Manual
 :man source: Btrbk {release-version}
 
@@ -185,10 +185,9 @@ not be certain about this, such operations are disallowed in
     Defines after what time (in full hours since midnight) a
     snapshot/backup is considered to be a "daily" backup. Daily,
     weekly, monthly and yearly backups are preserved on this hour (see
-    <<_retention_policy,RETENTION POLICY>> below). If you set this
-    option, make sure to also set 'timestamp_format' to ``long'' or
-    ``long-iso'' (backups and snapshots having no time information
-    will ignore this option). Defaults to ``0''.
+    <<_retention_policy,RETENTION POLICY>> below). Ignored on
+    snapshots or backups without time information ('timestamp_format
+    short'). Defaults to ``0''.
 
 *snapshot_preserve* no|<retention_policy>::
     Set retention policy for snapshots (see
@@ -368,9 +367,9 @@ constraints.
     held by another btrbk instance. Ignored on dryrun ('-n',
     '--dry-run'). See also '--lockfile' command-line option.
 
-*backend* btrfs-progs|btrfs-progs-btrbk|btrfs-progs-sudo::
+*backend* <backend>::
     Backend filesystem utilities to be used for btrfs specific
-    operations. Defaults to ``btrfs-progs''.
+    operations. Available backends:
 +
 --
 *btrfs-progs*::
@@ -389,6 +388,9 @@ constraints.
     subvolume show" instead of "btrfs subvolume show"). Make sure to
     have appropriate (root) permissions for the "btrfs" command groups
     as well as the "readlink" and "test" commands in /etc/sudoers.
+
+*btrfs-progs-doas*::
+    Similar to btrfs-progs-sudo, using prefix "doas -n".
 
 If you want to set this option for local or remote hosts only, set
 *backend_local* or *backend_remote* (e.g. "backend_remote
@@ -508,9 +510,7 @@ The format for '<retention_policy>' is:
 *hourly*::
     Defines how many hours back hourly backups should be
     preserved. The first backup of an hour is considered an hourly
-    backup. Note that if you use <hourly> scheduling, make sure to
-    also set 'timestamp_format' to ``long'' or ``long-iso'', or the
-    scheduler will interpret the time as "00:00" (midnight).
+    backup.
 
 *daily*::
     Defines how many days back daily backups should be preserved. The
