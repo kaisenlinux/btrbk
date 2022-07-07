@@ -1,7 +1,7 @@
 btrbk.conf(5)
 =============
-:date: 2022-02-26
-:release-version: 0.32.1
+:date: 2022-06-25
+:release-version: 0.32.2
 :man manual: Btrbk Manual
 :man source: Btrbk {release-version}
 
@@ -257,7 +257,7 @@ set to ``all'' (the default).
     to ``no''. Note that if *stream_compress* is enabled, ssh
     compression will always be disabled for send/receive operations.
 
-*ssh_cipher_spec* <cipher_spec>::
+*ssh_cipher_spec* default|<cipher_spec>::
     Selects the cipher specification for encrypting the session
     (comma-separated list of ciphers in order of preference). See the
     "-c cipher_spec" option in ssh(1) for more information. Defaults
@@ -355,7 +355,7 @@ constraints.
     in a space-separated table format: "localtime type status
     target_url source_url parent_url message".
 
-*transaction_syslog*  <facility>|no::
+*transaction_syslog* <facility>|no::
     If set, all transactions (as described in 'transaction_log' above)
     are logged to syslog. The program name used in the messages is
     "btrbk".  Accepted parameters for '<facility>': user, mail,
@@ -400,12 +400,29 @@ If you want to set this option for regular (non-root) user only, set
 *backend_local_user*.
 --
 
-*compat* busybox|no::
-    If set to ``busybox'', use busybox compatible commands. Defaults
-    to ``no''.
-    If you want to set this option for local or remote hosts only, you
-    can set *compat_local* or *compat_remote*
-    (e.g. "compat_remote busybox").
+*compat* <compat-option>...::
+    Enable compatibility options. Available 'compat-option':
++
+--
+*busybox*::
+    Use busybox compatible commands, at the expense of slight overhead
+    while reading filesystem information.
+
+*ignore_receive_errors*  _*experimental*_::
+    Tell btrfs-receive(8) to not terminate on errors by setting
+    "--max-errors=0" option. Print warnings instead.
++
+A known use case for this are target hosts lacking xattr support
+(e.g. some Synology NAS), while the send-stream contains "lsetxattr"
+commands. Another case is targets failing to set otime, complaining
+with "ERROR: attribute 12 requested but not present".
++
+Note that there is *no guarantee that backups created with this
+option enabled can be restored at all*.
+
+If you want to set this option for local or remote hosts only, set
+*compat_local* or *compat_remote* (e.g. "compat_remote busybox").
+--
 
 *cache_dir* <directory>::
     If set, cache extent maps for the "btrbk extents" command.
@@ -415,7 +432,9 @@ If you want to set this option for regular (non-root) user only, set
 
 *btrfs_commit_delete* after|each|no::
     If set, make sure the deletion of snapshot and backup subvolumes
-    are committed to disk when btrbk terminates. Defaults to ``no''.
+    are committed to disk when btrbk terminates (sets '--commit-after'
+    or '--commit-each' options when running "btrfs subvolume
+    delete"). Defaults to ``no''.
 
 *incremental_prefs* <list-spec>[:<amount>]...::
     Specify the preferences to determine the best common (correlated)
@@ -628,7 +647,7 @@ Additional options for "raw_target_encrypt gpg":
 
 *gpg_keyring* <file>::
     Keyring to use for gpg, e.g. "`/etc/btrbk/gpg/pubring.kbx`".
-*gpg_recipient* <name>::
+*gpg_recipient* <name>...::
     Encrypt for user id '<name>' (email address).
 
 

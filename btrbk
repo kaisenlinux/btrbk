@@ -35,7 +35,7 @@ use IPC::Open3 qw(open3);
 use Symbol qw(gensym);
 use Cwd qw(abs_path);
 
-our $VERSION         = '0.32.1';
+our $VERSION         = '0.32.2';
 our $AUTHOR          = 'Axel Burri <axel@tty0.ch>';
 our $PROJECT_HOME    = '<https://digint.ch/btrbk/>';
 
@@ -68,8 +68,7 @@ my $raw_postfix_match = qr/\.btrfs(\.($compress_format_alt))?(\.(gpg|encrypted))
 my $safe_file_match = qr/[0-9a-zA-Z_@\+\-\.\/]+/;  # note: ubuntu uses '@' in the subvolume layout: <https://help.ubuntu.com/community/btrfs>
 
 my $group_match = qr/[a-zA-Z0-9_:-]+/;
-my $ssh_cipher_match = qr/[a-z0-9][a-z0-9@.-]+/;
-my $split_match = qr/\s*[,\s]\s*/;
+my $config_split_match = qr/\s*[,\s]\s*/;
 
 my %day_of_week_map = ( sunday => 0, monday => 1, tuesday => 2, wednesday => 3, thursday => 4, friday => 5, saturday => 6 );
 my @syslog_facilities = qw( user mail daemon auth lpr news cron authpriv local0 local1 local2 local3 local4 local5 local6 local7 );
@@ -82,104 +81,104 @@ my %config_options = (
   # NOTE: the parser always maps "no" to undef
   # NOTE: keys "volume", "subvolume" and "target" are hardcoded
   # NOTE: files "." and "no" map to <undef>
-  timestamp_format            => { default => "long",    accept => [ "short", "long", "long-iso" ], context => [ "global", "volume", "subvolume" ] },
-  snapshot_dir                => { default => undef,     accept_file => { relative => 1, absolute => 1 }, context => [ "global", "volume", "subvolume" ] },
-  snapshot_name               => { c_default => 1,       accept_file => { name_only => 1 }, context => [ "subvolume" ], deny_glob_context => 1 },   # NOTE: defaults to the subvolume name (hardcoded)
-  snapshot_create             => { default => "always",  accept => [ "no", "always", "ondemand", "onchange" ], context => [ "global", "volume", "subvolume" ] },
-  incremental                 => { default => "yes",     accept => [ "yes", "no", "strict" ] },
-  incremental_prefs           => { default => \@incremental_prefs_default, accept_regexp => qr/^$incremental_prefs_match($split_match$incremental_prefs_match)*$/, split => $split_match },
-  incremental_clones          => { default => "yes",     accept => [ "yes", "no" ] },
-  incremental_resolve         => { default => "mountpoint", accept => [ "mountpoint", "directory", "_all_accessible" ] },
-  preserve_day_of_week        => { default => "sunday",  accept => [ (keys %day_of_week_map) ] },
-  preserve_hour_of_day        => { default => 0,         accept => [ (0..23) ]  },
-  snapshot_preserve           => { default => undef,     accept => [ "no" ], accept_preserve_matrix => 1, context => [ "global", "volume", "subvolume" ], },
-  snapshot_preserve_min       => { default => "all",     accept => [ "all", "latest" ], accept_regexp => qr/^[1-9][0-9]*[hdwmy]$/, context => [ "global", "volume", "subvolume" ], },
-  target_preserve             => { default => undef,     accept => [ "no" ], accept_preserve_matrix => 1 },
-  target_preserve_min         => { default => "all",     accept => [ "all", "latest", "no" ], accept_regexp => qr/^[0-9]+[hdwmy]$/ },
-  archive_preserve            => { default => undef,     accept => [ "no" ], accept_preserve_matrix => 1, context => [ "global" ] },
-  archive_preserve_min        => { default => "all",     accept => [ "all", "latest", "no" ], accept_regexp => qr/^[0-9]+[hdwmy]$/, context => [ "global" ] },
-  btrfs_commit_delete         => { default => undef,     accept => [ "after", "each", "no" ] },
-  ssh_identity                => { default => undef,     accept_file => { absolute => 1 } },
-  ssh_user                    => { default => "root",    accept_regexp => qr/^[a-z_][a-z0-9_-]*$/ },
-  ssh_compression             => { default => undef,     accept => [ "yes", "no" ] },
-  ssh_cipher_spec             => { default => "default", accept_regexp => qr/^$ssh_cipher_match(,$ssh_cipher_match)*$/ },
-  transaction_log             => { default => undef,     accept => [ "no" ], accept_file => { absolute => 1 }, context => [ "global" ] },
-  transaction_syslog          => { default => undef,     accept => [ "no", @syslog_facilities ], context => [ "global" ] },
-  lockfile                    => { default => undef,     accept => [ "no" ], accept_file => { absolute => 1 }, context => [ "global" ] },
+  timestamp_format            => { default => "long",        accept => [qw( short long long-iso )], context => [qw( global volume subvolume )] },
+  snapshot_dir                => { default => undef,         accept_file => { relative => 1, absolute => 1 }, context => [qw( global volume subvolume )] },
+  snapshot_name               => { c_default => 1,           accept_file => { name_only => 1 }, context => [qw( subvolume )], deny_glob_context => 1 },   # NOTE: defaults to the subvolume name (hardcoded)
+  snapshot_create             => { default => "always",      accept => [qw( no always ondemand onchange )], context => [qw( global volume subvolume )] },
+  incremental                 => { default => "yes",         accept => [qw( yes no strict )] },
+  incremental_prefs           => { default => \@incremental_prefs_default, accept => [ qr/$incremental_prefs_match/ ], split => 1 },
+  incremental_clones          => { default => "yes",         accept => [qw( yes no )] },
+  incremental_resolve         => { default => "mountpoint",  accept => [qw( mountpoint directory _all_accessible )] },
+  preserve_day_of_week        => { default => "sunday",      accept => [ (keys %day_of_week_map) ] },
+  preserve_hour_of_day        => { default => 0,             accept => [ (0..23) ]  },
+  snapshot_preserve           => { default => undef,         accept => [qw( no )], accept_preserve_matrix => 1, context => [qw( global volume subvolume )], },
+  snapshot_preserve_min       => { default => "all",         accept => [qw( all latest ), qr/[1-9][0-9]*[hdwmy]/ ], context => [qw( global volume subvolume )], },
+  target_preserve             => { default => undef,         accept => [qw( no )], accept_preserve_matrix => 1 },
+  target_preserve_min         => { default => "all",         accept => [qw( all latest no ), qr/[0-9]+[hdwmy]/ ] },
+  archive_preserve            => { default => undef,         accept => [qw( no )], accept_preserve_matrix => 1, context => [qw( global )] },
+  archive_preserve_min        => { default => "all",         accept => [qw( all latest no ), qr/[0-9]+[hdwmy]/ ], context => [qw( global )] },
+  btrfs_commit_delete         => { default => undef,         accept => [qw( after each no )] },
+  ssh_identity                => { default => undef,         accept_file => { absolute => 1 } },
+  ssh_user                    => { default => "root",        accept => [ qr/[a-z_][a-z0-9_-]*/ ] },
+  ssh_compression             => { default => undef,         accept => [qw( yes no )] },
+  ssh_cipher_spec             => { default => [ "default" ], accept => [qw( default ), qr/[a-z0-9][a-z0-9@.-]+/ ], split => 1 },
+  transaction_log             => { default => undef,         accept => [qw( no )], accept_file => { absolute => 1 }, context => [qw( global )] },
+  transaction_syslog          => { default => undef,         accept => [qw( no ), @syslog_facilities ], context => [qw( global )] },
+  lockfile                    => { default => undef,         accept => [qw( no )], accept_file => { absolute => 1 }, context => [qw( global )] },
 
-  rate_limit                  => { default => undef,     accept => [ "no" ], accept_regexp => qr/^[0-9]+[kmgtKMGT]?$/, require_bin => 'mbuffer' },
-  rate_limit_remote           => { default => undef,     accept => [ "no" ], accept_regexp => qr/^[0-9]+[kmgtKMGT]?$/ },  # NOTE: requires 'mbuffer' command on remote hosts
-  stream_buffer               => { default => undef,     accept => [ "no" ], accept_regexp => qr/^[0-9]+[kmgKMG%]?$/,  require_bin => 'mbuffer' },
-  stream_buffer_remote        => { default => undef,     accept => [ "no" ], accept_regexp => qr/^[0-9]+[kmgKMG%]?$/  },  # NOTE: requires 'mbuffer' command on remote hosts
-  stream_compress             => { default => undef,     accept => [ "no", (keys %compression) ] },
-  stream_compress_level       => { default => "default", accept => [ "default" ], accept_numeric => 1 },
-  stream_compress_long        => { default => "default", accept => [ "default" ], accept_numeric => 1 },
-  stream_compress_threads     => { default => "default", accept => [ "default" ], accept_numeric => 1 },
-  stream_compress_adapt       => { default => undef,     accept => [ "yes", "no" ] },
+  rate_limit                  => { default => undef,         accept => [qw( no ), qr/[0-9]+[kmgtKMGT]?/ ], require_bin => 'mbuffer' },
+  rate_limit_remote           => { default => undef,         accept => [qw( no ), qr/[0-9]+[kmgtKMGT]?/ ] },  # NOTE: requires 'mbuffer' command on remote hosts
+  stream_buffer               => { default => undef,         accept => [qw( no ), qr/[0-9]+[kmgKMG%]?/  ], require_bin => 'mbuffer' },
+  stream_buffer_remote        => { default => undef,         accept => [qw( no ), qr/[0-9]+[kmgKMG%]?/  ] },  # NOTE: requires 'mbuffer' command on remote hosts
+  stream_compress             => { default => undef,         accept => [qw( no ), (keys %compression) ] },
+  stream_compress_level       => { default => "default",     accept => [qw( default ), qr/[0-9]+/ ] },
+  stream_compress_long        => { default => "default",     accept => [qw( default ), qr/[0-9]+/ ] },
+  stream_compress_threads     => { default => "default",     accept => [qw( default ), qr/[0-9]+/ ] },
+  stream_compress_adapt       => { default => undef,         accept => [qw( yes no )] },
 
-  raw_target_compress         => { default => undef,     accept => [ "no", (keys %compression) ] },
-  raw_target_compress_level   => { default => "default", accept => [ "default" ], accept_numeric => 1 },
-  raw_target_compress_long    => { default => "default", accept => [ "default" ], accept_numeric => 1 },
-  raw_target_compress_threads => { default => "default", accept => [ "default" ], accept_numeric => 1 },
-  raw_target_encrypt          => { default => undef,     accept => [ "no", "gpg", "openssl_enc" ] },
-  raw_target_block_size       => { default => "128K",    accept_regexp => qr/^[0-9]+[kmgKMG]?$/ },
-  raw_target_split            => { default => undef,     accept => [ "no" ], accept_regexp => qr/^[0-9]+([kmgtpezyKMGTPEZY][bB]?)?$/ },
-  gpg_keyring                 => { default => undef,     accept_file => { absolute => 1 } },
-  gpg_recipient               => { default => undef,     accept_regexp => qr/^[0-9a-zA-Z_@\+\-\.]+$/ },
-  openssl_ciphername          => { default => "aes-256-cbc", accept_regexp => qr/^[0-9a-zA-Z\-]+$/ },
-  openssl_iv_size             => { default => undef,     accept => [ "no" ], accept_numeric => 1 },
-  openssl_keyfile             => { default => undef,     accept_file => { absolute => 1 } },
+  raw_target_compress         => { default => undef,         accept => [qw( no ), (keys %compression) ] },
+  raw_target_compress_level   => { default => "default",     accept => [qw( default ), qr/[0-9]+/ ] },
+  raw_target_compress_long    => { default => "default",     accept => [qw( default ), qr/[0-9]+/ ] },
+  raw_target_compress_threads => { default => "default",     accept => [qw( default ), qr/[0-9]+/ ] },
+  raw_target_encrypt          => { default => undef,         accept => [qw( no gpg openssl_enc )] },
+  raw_target_block_size       => { default => "128K",        accept => [ qr/[0-9]+[kmgKMG]?/ ] },
+  raw_target_split            => { default => undef,         accept => [qw( no ), qr/[0-9]+([kmgtpezyKMGTPEZY][bB]?)?/ ] },
+  gpg_keyring                 => { default => undef,         accept_file => { absolute => 1 } },
+  gpg_recipient               => { default => undef,         accept => [ qr/[0-9a-zA-Z_@\+\-\.]+/ ], split => 1 },
+  openssl_ciphername          => { default => "aes-256-cbc", accept => [ qr/[0-9a-zA-Z\-]+/ ] },
+  openssl_iv_size             => { default => undef,         accept => [qw( no ), qr/[0-9]+/ ] },
+  openssl_keyfile             => { default => undef,         accept_file => { absolute => 1 } },
 
-  kdf_backend                 => { default => undef,     accept_file => { absolute => 1 } },
-  kdf_keysize                 => { default => "32",      accept_numeric => 1 },
-  kdf_keygen                  => { default => "once",    accept => [ "once", "each" ] },
+  kdf_backend                 => { default => undef,         accept_file => { absolute => 1 } },
+  kdf_keysize                 => { default => "32",          accept => [ qr/[0-9]+/ ] },
+  kdf_keygen                  => { default => "once",        accept => [qw( once each )] },
 
-  group                       => { default => undef,     accept_regexp => qr/^$group_match($split_match$group_match)*$/, allow_multiple => 1, split => $split_match },
-  noauto                      => { default => undef,     accept => [ "yes", "no" ] },
+  group                       => { default => undef,         accept => [ qr/$group_match/ ], allow_multiple => 1, split => 1 },
+  noauto                      => { default => undef,         accept => [qw( yes no )] },
 
-  backend                     => { default => "btrfs-progs", accept => [       "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo", "btrfs-progs-doas" ] },
-  backend_local               => { default => undef,         accept => [ "no", "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo", "btrfs-progs-doas" ] },
-  backend_remote              => { default => undef,         accept => [ "no", "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo", "btrfs-progs-doas" ] },
-  backend_local_user          => { default => undef,         accept => [ "no", "btrfs-progs", "btrfs-progs-btrbk", "btrfs-progs-sudo", "btrfs-progs-doas" ] },
+  backend                     => { default => "btrfs-progs", accept => [qw(    btrfs-progs btrfs-progs-btrbk btrfs-progs-sudo btrfs-progs-doas )] },
+  backend_local               => { default => undef,         accept => [qw( no btrfs-progs btrfs-progs-btrbk btrfs-progs-sudo btrfs-progs-doas )] },
+  backend_remote              => { default => undef,         accept => [qw( no btrfs-progs btrfs-progs-btrbk btrfs-progs-sudo btrfs-progs-doas )] },
+  backend_local_user          => { default => undef,         accept => [qw( no btrfs-progs btrfs-progs-btrbk btrfs-progs-sudo btrfs-progs-doas )] },
 
-  compat                      => { default => undef,     accept => [ "no", "busybox" ] },
-  compat_local                => { default => undef,     accept => [ "no", "busybox" ] },
-  compat_remote               => { default => undef,     accept => [ "no", "busybox" ] },
-  safe_commands               => { default => undef,     accept => [ "yes", "no" ], context => [ "global" ] },
+  compat                      => { default => undef,         accept => [qw( no busybox ignore_receive_errors )], split => 1 },
+  compat_local                => { default => undef,         accept => [qw( no busybox ignore_receive_errors )], split => 1 },
+  compat_remote               => { default => undef,         accept => [qw( no busybox ignore_receive_errors )], split => 1 },
+  safe_commands               => { default => undef,         accept => [qw( yes no )], context => [qw( global )] },
 
-  snapshot_qgroup_destroy     => { default => undef,     accept => [ "yes", "no" ], context => [ "global", "volume", "subvolume" ] },
-  target_qgroup_destroy       => { default => undef,     accept => [ "yes", "no" ] },
-  archive_qgroup_destroy      => { default => undef,     accept => [ "yes", "no" ], context => [ "global" ] },
+  snapshot_qgroup_destroy     => { default => undef,         accept => [qw( yes no )], context => [qw( global volume subvolume )] },
+  target_qgroup_destroy       => { default => undef,         accept => [qw( yes no )] },
+  archive_qgroup_destroy      => { default => undef,         accept => [qw( yes no )], context => [qw( global )] },
 
-  archive_exclude             => { default => undef,     accept_file => { wildcards => 1 }, allow_multiple => 1, context => [ "global" ] },
-  archive_exclude_older       => { default => undef,     accept => [ "yes", "no" ] },
+  archive_exclude             => { default => undef,         accept_file => { wildcards => 1 }, allow_multiple => 1, context => [qw( global )] },
+  archive_exclude_older       => { default => undef,         accept => [qw( yes no )] },
 
-  cache_dir                   => { default => undef,     accept_file => { absolute => 1 }, allow_multiple => 1, context => [ "global" ] },
-  ignore_extent_data_inline   => { default => "yes",     accept => [ "yes", "no" ] },
+  cache_dir                   => { default => undef,         accept_file => { absolute => 1 }, allow_multiple => 1, context => [qw( global )] },
+  ignore_extent_data_inline   => { default => "yes",         accept => [qw( yes no )] },
 
-  warn_unknown_targets        => { default => undef,     accept => [ "yes", "no" ] },
+  warn_unknown_targets        => { default => undef,         accept => [qw( yes no )] },
 
   # deprecated options
-  ssh_port                    => { default => "default", accept => [ "default" ], accept_numeric => 1,
+  ssh_port                    => { default => "default", accept => [qw( default ), qr/[0-9]+/ ],
                                    deprecated => { DEFAULT => { warn => 'Please use "ssh://hostname[:port]" notation in the "volume" and "target" configuration lines.' } } },
-  btrfs_progs_compat          => { default => undef, accept => [ "yes", "no" ],
+  btrfs_progs_compat          => { default => undef, accept => [qw( yes no )],
                                    deprecated => { DEFAULT => { ABORT => 1, warn => 'This feature has been dropped in btrbk-v0.23.0. Please update to newest btrfs-progs, AT LEAST >= $BTRFS_PROGS_MIN' } } },
-  snapshot_preserve_daily     => { default => 'all', accept => [ "all" ], accept_numeric => 1, context => [ "global", "volume", "subvolume" ],
+  snapshot_preserve_daily     => { default => 'all', accept => [qw( all ), qr/[0-9]+/ ], context => [qw( global volume subvolume )],
                                    deprecated => { DEFAULT => { FAILSAFE_PRESERVE => 1, warn => 'Please use "snapshot_preserve" and/or "snapshot_preserve_min"' } } },
-  snapshot_preserve_weekly    => { default => 0, accept => [ "all" ], accept_numeric => 1, context => [ "global", "volume", "subvolume" ],
+  snapshot_preserve_weekly    => { default => 0, accept => [qw( all ), qr/[0-9]+/ ], context => [qw( global volume subvolume )],
                                    deprecated => { DEFAULT => { FAILSAFE_PRESERVE => 1, warn => 'Please use "snapshot_preserve" and/or "snapshot_preserve_min"' } } },
-  snapshot_preserve_monthly   => { default => 'all', accept => [ "all" ], accept_numeric => 1, context => [ "global", "volume", "subvolume" ],
+  snapshot_preserve_monthly   => { default => 'all', accept => [qw( all ), qr/[0-9]+/ ], context => [qw( global volume subvolume )],
                                    deprecated => { DEFAULT => { FAILSAFE_PRESERVE => 1, warn => 'Please use "snapshot_preserve" and/or "snapshot_preserve_min"' } } },
-  target_preserve_daily       => { default => 'all', accept => [ "all" ], accept_numeric => 1,
+  target_preserve_daily       => { default => 'all', accept => [qw( all ), qr/[0-9]+/ ],
                                    deprecated => { DEFAULT => { FAILSAFE_PRESERVE => 1, warn => 'Please use "target_preserve" and/or "target_preserve_min"' } } },
-  target_preserve_weekly      => { default => 0, accept => [ "all" ], accept_numeric => 1,
+  target_preserve_weekly      => { default => 0, accept => [qw( all ), qr/[0-9]+/ ],
                                    deprecated => { DEFAULT => { FAILSAFE_PRESERVE => 1, warn => 'Please use "target_preserve" and/or "target_preserve_min"' } } },
-  target_preserve_monthly     => { default => 'all', accept => [ "all" ], accept_numeric => 1,
+  target_preserve_monthly     => { default => 'all', accept => [qw( all ), qr/[0-9]+/ ],
                                    deprecated => { DEFAULT => { FAILSAFE_PRESERVE => 1, warn => 'Please use "target_preserve" and/or "target_preserve_min"' } } },
-  resume_missing              => { default => "yes", accept => [ "yes", "no" ],
+  resume_missing              => { default => "yes", accept => [qw( yes no )],
                                    deprecated => { yes => { warn => 'ignoring (missing backups are always resumed since btrbk v0.23.0)' },
                                                    no  => { FAILSAFE_PRESERVE => 1, warn => 'Please use "target_preserve_min latest" and "target_preserve no" if you want to keep only the latest backup', } } },
-  snapshot_create_always      => { default => undef, accept => [ "yes", "no" ],
+  snapshot_create_always      => { default => undef, accept => [qw( yes no )],
                                    deprecated => { yes => { warn => "Please use \"snapshot_create always\"",
                                                             replace_key   => "snapshot_create",
                                                             replace_value => "always",
@@ -190,12 +189,12 @@ my %config_options = (
                                                            }
                                                   },
                                  },
-  receive_log                 => { default => undef, accept => [ "sidecar", "no" ], accept_file => { absolute => 1 },
+  receive_log                 => { default => undef, accept => [qw( sidecar no )], accept_file => { absolute => 1 },
                                    deprecated => { DEFAULT => { warn => "ignoring" } },
                                  }
  );
 
-my @config_target_types = qw(send-receive raw);
+my @config_target_types = qw(send-receive raw); # first in list is default
 
 my %table_formats = (
   config_volume => {
@@ -265,7 +264,7 @@ my %table_formats = (
   },
 
   usage => {
-    table => [ qw(      -host -port mount_source  path size used free ) ],
+    table => [ qw(      -host -port mount_source path size used free ) ],
     long  => [ qw( type -host -port mount_source path size used device_size device_allocated device_unallocated device_missing device_used free free_min data_ratio metadata_ratio global_reserve global_reserve_used ) ],
     raw   => [ qw( type  host  port mount_source path size used device_size device_allocated device_unallocated device_missing device_used free free_min data_ratio metadata_ratio global_reserve global_reserve_used ) ],
     RALIGN => { size=>1, used=>1, device_size=>1, device_allocated=>1, device_unallocated=>1, device_missing=>1, device_used=>1, free=>1, free_min=>1, data_ratio=>1, metadata_ratio=>1, global_reserve=>1, global_reserve_used=>1 },
@@ -398,7 +397,13 @@ $SIG{INT} = sub {
 
 sub VERSION_MESSAGE
 {
-  print STDERR $VERSION_INFO . "\n\n";
+  print $VERSION_INFO . "\n";
+}
+
+sub ERROR_HELP_MESSAGE
+{
+  return if($quiet);
+  print STDERR "See '$program_name --help'.\n";
 }
 
 sub HELP_MESSAGE
@@ -406,7 +411,7 @@ sub HELP_MESSAGE
   return if($quiet);
 #80-----------------------------------------------------------------------------
   if($program_name eq "lsbtr") {
-    print STDERR <<"END_HELP_LSBTR";
+    print <<"END_HELP_LSBTR";
 usage: lsbtr [<options>] [[--] <path>...]
 
 options:
@@ -424,7 +429,7 @@ For additional information, see $PROJECT_HOME
 END_HELP_LSBTR
   }
   else {
-    print STDERR <<"END_HELP_BTRBK";
+    print <<"END_HELP_BTRBK";
 usage: btrbk [<options>] <command> [[--] <filter>...]
 
 options:
@@ -1053,52 +1058,33 @@ sub btrfs_filesystem_usage($)
 
   my %detail;
   foreach(@$ret) {
-    if(/^\s+Device size:\s+(\S+)/) {
-      $detail{device_size} = $1;
-    }
-    elsif(/^\s+Device allocated:\s+(\S+)/) {
-      $detail{device_allocated} = $1;
-    }
-    elsif(/^\s+Device unallocated:\s+(\S+)/) {
-      $detail{device_unallocated} = $1;
-    }
-    elsif(/^\s+Device missing:\s+(\S+)/) {
-      $detail{device_missing} = $1;
-    }
-    elsif(/^\s+Used:\s+(\S+)/) {
-      $detail{device_used} = $1;
-    }
-    elsif(/^\s+Free \(estimated\):\s+(\S+)\s+\(min: (\S+)\)/) {
-      $detail{free} = $1;
-      $detail{free_min} = $2;
-    }
-    elsif(/^\s+Data ratio:\s+(\S+)/) {
-      $detail{data_ratio} = $1;
-    }
-    elsif(/^\s+Metadata ratio:\s+(\S+)/) {
-      $detail{metadata_ratio} = $1;
-    }
-    elsif(/^\s+Used:\s+(\S+)/) {
-      $detail{used} = $1;
-    }
-    elsif(/^\s+Global reserve:\s+(\S+)\s+\(used: (\S+)\)/) {
-      $detail{global_reserve} = $1;
-      $detail{global_reserve_used} = $2;
-    }
-    else {
-      TRACE "Failed to parse filesystem usage line \"$_\" for: $vol->{PRINT}" if($do_trace);
-    }
+    $detail{device_size}        = $1, next if(/^\s+Device size:\s+(\S+)/);
+    $detail{device_allocated}   = $1, next if(/^\s+Device allocated:\s+(\S+)/);
+    $detail{device_unallocated} = $1, next if(/^\s+Device unallocated:\s+(\S+)/);
+    $detail{device_missing}     = $1, next if(/^\s+Device missing:\s+(\S+)/);
+    $detail{device_used}        = $1, next if(/^\s+Used:\s+(\S+)/);
+    @detail{qw(free free_min)}  = ($1,$2), next if(/^\s+Free \(estimated\):\s+(\S+)\s+\(min: (\S+)\)/);
+    $detail{data_ratio}         = $1, next if(/^\s+Data ratio:\s+([0-9]+\.[0-9]+)/);
+    $detail{metadata_ratio}     = $1, next if(/^\s+Metadata ratio:\s+([0-9]+\.[0-9]+)/);
+    $detail{used}               = $1, next if(/^\s+Used:\s+(\S+)/);
+    @detail{qw(global_reserve global_reserve_used)} = ($1,$2), next if(/^\s+Global reserve:\s+(\S+)\s+\(used: (\S+)\)/);
+    TRACE "Failed to parse filesystem usage line \"$_\" for: $vol->{PRINT}" if($do_trace);
   }
   DEBUG "Parsed " . scalar(keys %detail) . " filesystem usage detail items: $vol->{PRINT}";
 
+  foreach (qw(device_size device_used data_ratio)) {
+    unless(defined($detail{$_})) {
+      ERROR "Failed to parse filesystem usage detail (unsupported btrfs-progs) for: $vol->{PRINT}";
+      return undef;
+    }
+  }
+
   # calculate aggregate size / usage
-  if($detail{data_ratio} =~ /^[0-9]+\.[0-9]+$/) {
-    if($detail{device_size} =~ /^([0-9]+\.[0-9]+)(.*)/) {
-      $detail{size} = sprintf('%.2f%s', $1 / $detail{data_ratio}, $2);
-    }
-    if($detail{device_used} =~ /^([0-9]+\.[0-9]+)(.*)/) {
-      $detail{used} = sprintf('%.2f%s', $1 / $detail{data_ratio}, $2);
-    }
+  if($detail{device_size} =~ /^([0-9]+\.[0-9]+)(.*)/) {
+    $detail{size} = sprintf('%.2f%s', $1 / $detail{data_ratio}, $2);
+  }
+  if($detail{device_used} =~ /^([0-9]+\.[0-9]+)(.*)/) {
+    $detail{used} = sprintf('%.2f%s', $1 / $detail{data_ratio}, $2);
   }
 
   TRACE(Data::Dumper->Dump([\%detail], ["btrfs_filesystem_usage($vol->{URL})"])) if($do_trace && $do_dumper);
@@ -1570,6 +1556,7 @@ sub btrfs_send_receive($$;$$$)
   INFO "[send/receive] clone-src: $_->{PRINT}" foreach(@$clone_src);
 
   my $stream_options = config_stream_hash($snapshot, $target);
+  my $compat_ignore_err = config_key_lru($target, "compat", "ignore_receive_errors");
 
   my @send_options;
   my @receive_options;
@@ -1577,6 +1564,7 @@ sub btrfs_send_receive($$;$$$)
   push(@send_options, '-c', { unsafe => $_ } ) foreach(map { $_->{PATH} } @$clone_src);
   # push(@send_options, '-v') if($loglevel >= 3);
   # push(@receive_options, '-v') if($loglevel >= 3);
+  push(@receive_options, '--max-errors=0') if($compat_ignore_err);
 
   my @cmd_pipe;
   push @cmd_pipe, {
@@ -1589,7 +1577,13 @@ sub btrfs_send_receive($$;$$$)
   push @cmd_pipe, {
     cmd => vinfo_cmd($target, "btrfs receive", @receive_options, { unsafe => $target_path . '/' } ),
     rsh => vinfo_rsh($target, disable_compression => $stream_options->{stream_compress}),
-    fatal_stderr  => sub { m/^ERROR: /; }, # NOTE: btrfs-progs < 4.11: if "btrfs send" fails, "btrfs receive" returns 0!
+    fatal_stderr => sub {
+      # NOTE: btrfs-progs < 4.11: if "btrfs send" fails, "btrfs receive" returns 0!
+      if($compat_ignore_err && s/^ERROR: (.*)//) {
+        WARN "Ignoring btrfs receive error (compat=ignore_receive_errors): $1";
+      }
+      m/^ERROR: /;
+    },
   };
 
   my $send_receive_error = 0;
@@ -1756,7 +1750,10 @@ sub btrfs_send_to_file($$$;$$)
       my @gpg_options = ( '--batch', '--no-tty', '--no-random-seed-file', '--trust-model', 'always' );
       push @gpg_options, ( '--compress-algo', 'none' ) if($compress);  # NOTE: if --compress-algo is not set, gpg might still compress according to OpenPGP standard.
       push(@gpg_options, ( '--no-default-keyring', '--keyring', { unsafe => $encrypt->{keyring} } )) if($encrypt->{keyring});
-      push(@gpg_options, ( '--default-recipient', $encrypt->{recipient} )) if($encrypt->{recipient});
+      if($encrypt->{recipient}) {
+        push(@gpg_options, '--no-default-recipient');
+        push(@gpg_options, map +( '--recipient', $_ ), @{$encrypt->{recipient}});
+      }
       push @cmd_pipe, {
         cmd => [ 'gpg', @gpg_options, '--encrypt' ],
         compressed_ok => ($compress ? 1 : 0),
@@ -2054,6 +2051,7 @@ sub system_mkdir($)
                    );
   end_transaction("mkdir", defined($ret));
   return undef unless(defined($ret));
+  delete $realpath_cache{$vol->{URL}};
   return 1;
 }
 
@@ -2810,7 +2808,7 @@ sub vinfo_rsh($;@)
   my $ssh_user        = config_key($config, "ssh_user");
   my $ssh_identity    = config_key($config, "ssh_identity");
   my $ssh_compression = config_key($config, "ssh_compression");
-  my $ssh_cipher_spec = config_key($config, "ssh_cipher_spec") // "default";
+  my $ssh_cipher_spec = join(",", @{config_key($config, "ssh_cipher_spec")});
   my @ssh_options; # as of btrbk-0.29.0, we run ssh without -q (catching @stderr)
   push(@ssh_options, '-p', $ssh_port) if($ssh_port);
   push(@ssh_options, '-c', $ssh_cipher_spec) if($ssh_cipher_spec ne "default");
@@ -3771,8 +3769,8 @@ sub get_best_parent($$$;@)
 
   if($strict_related && (!grep(exists($c_rel_id{$_->[0]{node}{id}}), @parent))) {
     # no relations by parent_uuid found
-    WARN "No related common parent found (by parent_uuid relationship) for: $svol->{PRINT}";
-    WARN "Hint: setting option \"incremental\" to \"yes\" (instead of \"strict\") will use parent: " . join(", ", map { $_->[0]{PRINT} } @parent);
+    WARN "No related common parent found (by parent_uuid relationship) for: $svol->{PRINT}",
+         "Hint: setting option \"incremental\" to \"yes\" (instead of \"strict\") will use parent: " . join(", ", map $_->[0]{PRINT}, @parent);
     return undef;
   }
 
@@ -4039,27 +4037,25 @@ sub config_dump_keys($;@)
   {
     my $val;
     next if($config_options{$key}->{deprecated});
-    if($opts{resolve}) {
-      $val = config_key($config, $key);
-    } else {
-      next unless exists($config->{$key});
-      $val = $config->{$key};
-    }
-    my @valary = (ref($val) eq "ARRAY") ? @$val : $val;
-    foreach(@valary) {
+    next unless($opts{all} || exists($config->{$key}) || exists($config_override{$key}));
+    next if($config_options{$key}{context} && !grep(/^$config->{CONTEXT}$/, @{$config_options{$key}{context}}));
+    $val = config_key($config, $key);
+
+    my @va = (ref($val) eq "ARRAY") ? ($config_options{$key}->{split} ? join(" ", @$val) : @$val) : $val;
+    foreach(@va) {
       if(defined($_)) {
         if($config_options{$key}->{accept_preserve_matrix}) {
           $_ = format_preserve_matrix($_, format => "config");
         }
       }
-      $_ //= exists($config->{$key}) ? "no" : "<unset>";
+      $_ //= grep(/^no$/, @{$config_options{$key}{accept} // []}) ? "no" : "<unset>";
+      my $comment = $_ eq "<unset>" ? "# " : "";
       my $len = length($key);
       $maxlen = $len if($len > $maxlen);
-      push @ret, { key => $key, val => $_, len => $len };
+      push @ret, { comment => $comment, key => $key, val => $_, len => $len };
     }
   }
-  # print as table
-  return map { ($opts{prefix} // "") . $_->{key} . (' ' x (1 + $maxlen - $_->{len})) . ' ' . $_->{val} } @ret;
+  return map { ($opts{prefix} // "") . $_->{comment} . $_->{key} . (' ' x (1 + $maxlen - $_->{len})) . ' ' . $_->{val} } @ret;
 }
 
 
@@ -4090,42 +4086,35 @@ sub append_config_option($$$$;@)
     return undef;
   }
 
+  my $ovalue = $value;
+
   if($value eq "") {
-    if(grep(/^yes$/, @{$opt->{accept}})) {
-      $value = "yes";
-      TRACE "option \"$key\" has no value, accepted map to \"yes\"" if($do_trace);
+    $value = "yes";
+    TRACE "option \"$key\" has no value, setting to \"yes\"" if($do_trace);
+  }
+
+  if($opt->{split}) {
+    $value = [ split($config_split_match, $value) ];
+  }
+
+  my $accepted;
+  if($opt->{accept}) {
+    $accepted = 1;
+    foreach my $val (ref($value) ? @$value : $value) {
+      $accepted = 0, last unless(grep { $val =~ /^$_$/ } @{$opt->{accept}});
+      TRACE "option \"$key=$val\" found in accept list" if($do_trace);
     }
-    else {
-      ERROR "Unsupported empty value for option \"$key\" $error_statement";
-      return undef;
-    }
   }
-  elsif(grep(/^\Q$value\E$/, @{$opt->{accept}})) {
-    TRACE "option \"$key=$value\" found in accept list" if($do_trace);
-  }
-  elsif($opt->{accept_numeric} && ($value =~ /^[0-9]+$/)) {
-    TRACE "option \"$key=$value\" is numeric, accepted" if($do_trace);
-  }
-  elsif($opt->{accept_file})
-  {
+  if(!$accepted && $opt->{accept_file}) {
     # be very strict about file options, for security sake
     $value = check_file($value, $opt->{accept_file}, sanitize => 1, error_statement => ($error_statement ? "for option \"$key\" $error_statement" : undef));
     return undef unless(defined($value));
 
     TRACE "option \"$key=$value\" is a valid file, accepted" if($do_trace);
     $value = "no" if($value eq ".");  # maps to undef later
+    $accepted = 1;
   }
-  elsif($opt->{accept_regexp}) {
-    my $match = $opt->{accept_regexp};
-    if($value =~ m/$match/) {
-      TRACE "option \"$key=$value\" matched regexp, accepted" if($do_trace);
-    }
-    else {
-      ERROR "Value \"$value\" failed input validation for option \"$key\" $error_statement";
-      return undef;
-    }
-  }
-  elsif($opt->{accept_preserve_matrix}) {
+  if(!$accepted && $opt->{accept_preserve_matrix}) {
     my %preserve;
     my $s = ' ' . $value;
     while($s =~ s/\s+(\*|[0-9]+)([hdwmyHDWMY])//) {
@@ -4146,9 +4135,12 @@ sub append_config_option($$$$;@)
     $config->{$key} = \%preserve;
     return $config;
   }
-  else
-  {
-    ERROR "Unsupported value \"$value\" for option \"$key\" $error_statement";
+  if(!$accepted) {
+    if($ovalue eq "") {
+      ERROR "Unsupported empty value for option \"$key\" $error_statement";
+    } else {
+      ERROR "Unsupported value \"$ovalue\" for option \"$key\" $error_statement";
+    }
     return undef;
   }
 
@@ -4188,17 +4180,10 @@ sub append_config_option($$$$;@)
 
   if($opt->{allow_multiple}) {
     my $aref = $config->{$key} // [];
-    if($opt->{split}) {
-      push(@$aref, split($opt->{split}, $value));
-    }
-    else {
-      push(@$aref, $value);
-    }
-    TRACE "pushing option \"$key=$value\" to $aref=[" . join(',', @$aref) . "]" if($do_trace);
+    my @val = ref($value) ? @$value : $value;
+    push(@$aref, @val);
+    TRACE "pushing option \"$key=[" . join(",", @val) . "]\" to $aref=[" . join(',', @$aref) . "]" if($do_trace);
     $value = $aref;
-  }
-  elsif($opt->{split}) { # note: allow_multiple split has different semantics
-    $value = [ split($opt->{split}, $value) ];
   }
   elsif(exists($config->{$key})) {
     unless($opt->{c_default}) { # note: computed defaults are already present
@@ -4213,17 +4198,23 @@ sub append_config_option($$$$;@)
 }
 
 
-sub parse_config_line($$$$$)
+sub parse_config_line($$$;@)
 {
-  my ($file, $root, $cur, $key, $value) = @_;
+  my ($cur, $key, $value, %opts) = @_;
+  my $root = $cur;
+  $root = $root->{PARENT} while($root->{CONTEXT} ne "global");
+  my $error_statement = $opts{error_statement} // "";
 
   if($key eq "volume")
   {
+    $value =~ s/^"(.*)"$/$1/;
+    $value =~ s/^'(.*)'$/$1/;
+
     $cur = $root;
     TRACE "config: context forced to: $cur->{CONTEXT}" if($do_trace);
 
     # be very strict about file options, for security sake
-    my ($url_prefix, $path) = check_url($value, error_statement => "for option \"$key\" in \"$file\" line $.");
+    my ($url_prefix, $path) = check_url($value, error_statement => "for option \"$key\" $error_statement");
     return undef unless(defined($path));
     TRACE "config: adding volume \"$url_prefix$path\" to global context" if($do_trace);
     die unless($cur->{CONTEXT} eq "global");
@@ -4237,6 +4228,9 @@ sub parse_config_line($$$$$)
   }
   elsif($key eq "subvolume")
   {
+    $value =~ s/^"(.*)"$/$1/;
+    $value =~ s/^'(.*)'$/$1/;
+
     while($cur->{CONTEXT} ne "volume") {
       if($cur->{CONTEXT} eq "global") {
         TRACE "config: adding dummy volume context" if($do_trace);
@@ -4259,7 +4253,7 @@ sub parse_config_line($$$$$)
       $url = ($rel_path eq '.') ? $cur->{url} : $cur->{url} . '/' . $rel_path;
     }
     else {
-      my ($url_prefix, $path) = check_url($value, accept_wildcards => 1, error_statement => "for option \"$key\"" . ($cur->{DUMMY} ?  " (if no \"volume\" section is declared)" : "") . " in \"$file\" line $.");
+      my ($url_prefix, $path) = check_url($value, accept_wildcards => 1, error_statement => "for option \"$key\"" . ($cur->{DUMMY} ?  " (if no \"volume\" section is declared)" : "") . " $error_statement");
       return undef unless(defined($path));
       $url = $url_prefix . $path;
     }
@@ -4286,39 +4280,35 @@ sub parse_config_line($$$$$)
       $cur = $cur->{PARENT} || die;
       TRACE "config: context changed to: $cur->{CONTEXT}" if($do_trace);
     }
-    if($value =~ /^((?<target_type>\S+)\s+)?(?<url>\S+)$/)
-    {
-      # as of btrbk-0.28.0, target_type is optional and defaults to "send-receive"
-      my $target_type = $+{target_type} // "send-receive";
-      my $url = $+{url};
-      unless(grep(/^\Q$target_type\E$/, @config_target_types)) {
-        ERROR "Unknown target type \"$target_type\" in \"$file\" line $.";
-        return undef;
-      }
-      # be very strict about file options, for security sake
-      my ($url_prefix, $path) = check_url($url, error_statement => "for option \"$key\" in \"$file\" line $.");
-      return undef unless(defined($path));
 
-      TRACE "config: adding target \"$url_prefix$path\" (type=$target_type) to $cur->{CONTEXT} context" . ($cur->{url} ? ": $cur->{url}" : "") if($do_trace);
-      my $target = { CONTEXT => "target",
-                     PARENT => $cur,
-                     target_type => $target_type,
-                     url => $url_prefix . $path,
-                   };
-      # NOTE: target sections are propagated to the apropriate SUBSECTION in _config_propagate_target()
-      $cur->{TARGET} //= [];
-      push(@{$cur->{TARGET}}, $target);
-      $cur = $target;
-    }
-    else
-    {
-      ERROR "Ambiguous target configuration, in \"$file\" line $.";
+    # As of btrbk-0.28.0, target_type is optional and defaults to "send-receive"
+    my $target_type = $config_target_types[0];
+    $target_type = lc($1) if($value =~ s/^([a-zA-Z_-]+)\s+//);
+    unless(grep(/^\Q$target_type\E$/, @config_target_types)) {
+      ERROR "Unknown target type \"$target_type\" $error_statement";
       return undef;
     }
+
+    $value =~ s/^"(.*)"$/$1/;
+    $value =~ s/^'(.*)'$/$1/;
+
+    my ($url_prefix, $path) = check_url($value, error_statement => "for option \"$key\" $error_statement");
+    return undef unless(defined($path));
+
+    TRACE "config: adding target \"$url_prefix$path\" (type=$target_type) to $cur->{CONTEXT} context" . ($cur->{url} ? ": $cur->{url}" : "") if($do_trace);
+    my $target = { CONTEXT => "target",
+                   PARENT => $cur,
+                   target_type => $target_type,
+                   url => $url_prefix . $path,
+                 };
+    # NOTE: target sections are propagated to the apropriate SUBSECTION in _config_propagate_target()
+    $cur->{TARGET} //= [];
+    push(@{$cur->{TARGET}}, $target);
+    $cur = $target;
   }
   else
   {
-    return append_config_option($cur, $key, $value, $cur->{CONTEXT}, error_statement => "in \"$file\" line $.");
+    return append_config_option($cur, $key, $value, $cur->{CONTEXT}, error_statement => $error_statement);
   }
 
   return $cur;
@@ -4408,30 +4398,21 @@ sub parse_config($)
   open(FILE, '<', $file) or die $!;
   while (<FILE>) {
     chomp;
-    s/#.*//;         # remove comments
-    s/\s*$//;        # remove trailing whitespace
+    s/((?:[^"'#]*(?:"[^"]*"|'[^']*'))*[^"'#]*)#.*/$1/; # remove comments
     next if /^\s*$/; # ignore empty lines
+    s/^\s*//;        # remove leading whitespace
+    s/\s*$//;        # remove trailing whitespace
     TRACE "config: parsing line $. with context=$cur->{CONTEXT}: \"$_\"" if($do_trace);
-    if(/^(\s*)([a-zA-Z_]+)(\s+(.*))?$/)
-    {
-      # NOTE: we do not perform checks on indentation!
-      my ($indent, $key, $value) = (length($1), lc($2), $4 // "");
-      $value =~ s/^"(.*)"$/$1/;
-      $value =~ s/^'(.*)'$/$1/;
-      $cur = parse_config_line($file, $root, $cur, $key, $value);
-      unless(defined($cur)) {
-        # error, bail out
-        $root = undef;
-        last;
-      }
-      TRACE "line processed: new context=$cur->{CONTEXT}" if($do_trace);
-    }
-    else
-    {
+    unless(/^([a-zA-Z_]+)(?:\s+(.*))?$/) {
       ERROR "Parse error in \"$file\" line $.";
       $root = undef;
       last;
     }
+    unless($cur = parse_config_line($cur, lc($1), $2 // "", error_statement => "in \"$file\" line $.")) {
+      $root = undef;
+      last;
+    }
+    TRACE "line processed: new context=$cur->{CONTEXT}" if($do_trace);
   }
   close FILE || ERROR "Failed to close configuration file: $!";
 
@@ -5370,8 +5351,8 @@ MAIN:
   $program_name =~ s/^.*\///; # remove path
   my @getopt_options = (
     # common options
-    'help|h'             => sub { VERSION_MESSAGE(); HELP_MESSAGE(0); exit 0; },
-    'version'            => sub { VERSION_MESSAGE(); exit 0; },
+    'help|h'             => sub { HELP_MESSAGE; exit 0; },
+    'version'            => sub { VERSION_MESSAGE; exit 0; },
     'quiet|q'            => \$quiet,
     'verbose|v'          => sub { $loglevel = ($loglevel =~ /^[0-9]+$/) ? $loglevel+1 : 2; },
     'loglevel|l=s'       => \$loglevel,
@@ -5408,8 +5389,7 @@ MAIN:
     'tbytes'             => sub { @output_unit = ("TiB", 1024 * 1024 * 1024 * 1024 ) },
    );
   unless(GetOptions(@getopt_options)) {
-    VERSION_MESSAGE();
-    HELP_MESSAGE(0);
+    ERROR_HELP_MESSAGE;
     exit 2;
   }
   if($program_name eq "lsbtr") {
@@ -5418,8 +5398,7 @@ MAIN:
   }
   my $command = shift @ARGV;
   unless($command) {
-    VERSION_MESSAGE();
-    HELP_MESSAGE(0);
+    HELP_MESSAGE;
     exit 2;
   }
 
@@ -5428,7 +5407,7 @@ MAIN:
   $loglevel = { error => 0, warn => 1, warning => 1, info => 2, debug => 3, trace => 4 }->{$loglevel} // $loglevel;
   unless($loglevel =~ /^[0-9]+$/) {
     ERROR "Unknown loglevel: $loglevel";
-    HELP_MESSAGE(0);
+    ERROR_HELP_MESSAGE;
     exit 2;
   }
   $do_trace = 1 if($loglevel >= 4);
@@ -5568,18 +5547,18 @@ MAIN:
     }
     else {
       ERROR "Unknown subcommand for \"config\" command: $subcommand";
-      HELP_MESSAGE(0);
+      ERROR_HELP_MESSAGE;
       exit 2;
     }
   }
   else {
     ERROR "Unrecognized command: $command";
-    HELP_MESSAGE(0);
+    ERROR_HELP_MESSAGE;
     exit 2;
   }
   if(($args_expected_min > scalar(@ARGV)) || ($args_expected_max < scalar(@ARGV))) {
     ERROR "Incorrect number of arguments";
-    HELP_MESSAGE(0);
+    ERROR_HELP_MESSAGE;
     exit 2;
   }
 
@@ -5591,7 +5570,7 @@ MAIN:
     }
     unless(defined($path)) {
       ERROR "Bad argument: not a subvolume declaration: $_";
-      HELP_MESSAGE(0);
+      ERROR_HELP_MESSAGE;
       exit 2;
     }
     $_ = $url_prefix . $path;
@@ -5601,7 +5580,7 @@ MAIN:
     my $vf = vinfo_filter_statement($_);
     unless($vf) {
       ERROR "Bad argument: invalid filter statement: $_";
-      HELP_MESSAGE(0);
+      ERROR_HELP_MESSAGE;
       exit 2;
     }
     push @filter_vf, $vf;
@@ -5610,7 +5589,7 @@ MAIN:
     my $vf = vinfo_filter_statement($_);
     unless($vf) {
       ERROR "Bad argument: invalid filter statement: --exclude='$_'";
-      HELP_MESSAGE(0);
+      ERROR_HELP_MESSAGE;
       exit 2;
     }
     push @exclude_vf, $vf;
@@ -5620,13 +5599,13 @@ MAIN:
       my $key = $1;
       my $value = $2;
       unless(append_config_option(\%config_override, $key, $value, "OVERRIDE", error_statement => "in option \"--override\"")) {
-        HELP_MESSAGE(0);
+        ERROR_HELP_MESSAGE;
         exit 2;
       }
     }
     else {
       ERROR "Option \"override\" requires \"<config_option>=<value>\" format";
-      HELP_MESSAGE(0);
+      ERROR_HELP_MESSAGE;
       exit 2;
     }
   }
@@ -5862,7 +5841,7 @@ MAIN:
       @data = sort { $a->{subvol} cmp $b->{subvol} } @data;
     }
 
-    INFO "Printing extents map set difference: (extents \\ extents-on-prev-line)";
+    INFO "Printing extents map set difference: (extents \\ extents-on-prev-line)" if $do_diff;
     print_formatted("extent_diff", \@data, paragraph => 1);
     print_formatted({ table => [ qw( a b ) ], RALIGN => { b=>1 } },
                     \@summary, output_format => "table", no_header => 1);
@@ -6036,6 +6015,7 @@ MAIN:
           $droot->{node} = $archive_root->{node};
           $droot->{NODE_SUBDIR} = $subvol_dir;
           $droot->{VINFO_MOUNTPOINT} = $archive_root->{VINFO_MOUNTPOINT};
+          $realpath_cache{$droot->{URL}} = $droot->{PATH};
         }
         else {
           # after directory is created, try to init again
@@ -6461,30 +6441,30 @@ MAIN:
 
   if($action_config_print)
   {
-    my $resolve = ($action_config_print eq "print-all");
     #
     # print configuration lines, machine readable
     #
+    my %opts = (all => ($action_config_print eq "print-all"));
     my @out;
-    push @out, config_dump_keys($config, resolve => $resolve);
+    push @out, config_dump_keys($config, %opts);
     my $indent = "";
     foreach my $sroot (vinfo_subsection($config, 'volume', 1)) {
       unless($sroot->{CONFIG}{DUMMY}) {
         push @out, "";
         push @out, "volume $sroot->{URL}";
         $indent .= "\t";
-        push @out, config_dump_keys($sroot, prefix => $indent, resolve => $resolve);
+        push @out, config_dump_keys($sroot, prefix => $indent, %opts);
       }
       foreach my $svol (vinfo_subsection($sroot, 'subvolume', 1)) {
         push @out, "";
         push @out, "${indent}# subvolume $svol->{CONFIG}->{url_glob}" if(defined($svol->{CONFIG}->{url_glob}));
         push @out, "${indent}subvolume $svol->{URL}";
         $indent .= "\t";
-        push @out, config_dump_keys($svol, prefix => $indent, resolve => $resolve);
+        push @out, config_dump_keys($svol, prefix => $indent, %opts);
         foreach my $droot (vinfo_subsection($svol, 'target', 1)) {
           push @out, "";
           push @out, "${indent}target $droot->{CONFIG}->{target_type} $droot->{URL}";
-          push @out, config_dump_keys($droot, prefix => "\t$indent", resolve => $resolve);
+          push @out, config_dump_keys($droot, prefix => "\t$indent", %opts);
         }
         $indent =~ s/\t//;
       }
@@ -6493,7 +6473,6 @@ MAIN:
 
     print_header(title => "Configuration Dump",
                  config => $config,
-                 options => [ map { "exclude: $_" } @exclude_cmdline ],
                  time => $start_time,
                 );
 
