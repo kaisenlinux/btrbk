@@ -17,6 +17,13 @@
 # Enable transaction log
 transaction_log            /var/log/btrbk.log
 
+# Specify SSH private key for remote connections
+ssh_identity               /etc/btrbk/ssh/id_ed25519
+ssh_user                   root
+
+# Use sudo if btrbk or lsbtr is run by regular user
+backend_local_user         btrfs-progs-sudo
+
 # Enable stream buffer. Adding a buffer between the sending and
 # receiving side is generally a good idea.
 # NOTE: If enabled, make sure to install the "mbuffer" package!
@@ -29,7 +36,7 @@ stream_buffer              256m
 # If you want to set a custom name for the snapshot (and backups),
 # use the "snapshot_name" option within the subvolume section.
 #
-# NOTE: btrbk does not autmatically create this directory, and the
+# NOTE: btrbk does not automatically create this directory, and the
 # snapshot creation will fail if it is not present.
 #
 snapshot_dir               _btrbk_snap
@@ -67,12 +74,6 @@ snapshot_dir               _btrbk_snap
 #archive_preserve_min       no
 #archive_preserve           <NN>h <NN>d <NN>w <NN>m <NN>y
 
-# Specify SSH private key for "ssh://" volumes / targets:
-#ssh_identity               /etc/btrbk/ssh/id_ed25519
-#ssh_user                   root
-#ssh_compression            no
-#ssh_cipher_spec            default
-
 # Enable compression for remote btrfs send/receive operations:
 #stream_compress            no
 #stream_compress_level      default
@@ -82,10 +83,10 @@ snapshot_dir               _btrbk_snap
 # can be run at a time.
 #lockfile                   /var/lock/btrbk.lock
 
-# Don't wait for transaction commit on deletion. Set this to "after"
-# or "each" to make sure the deletion of subvolumes is committed to
-# disk when btrbk terminates.
-#btrfs_commit_delete        no
+# Don't wait for transaction commit on deletion. Enable this to make
+# sure the deletion of subvolumes is committed to disk when btrbk
+# terminates.
+#btrfs_commit_delete no
 
 
 #
@@ -176,6 +177,21 @@ volume ssh://my-remote-host.com/mnt/btr_pool
     snapshot_dir   snapshots/btrbk
     snapshot_name  data_main
     target /mnt/btr_backup/my-remote-host.com
+
+
+# Backup on demand (noauto) to remote host running busybox, login as
+# regular user using ssh-agent with current user name (ssh_user no)
+# and default credentials (ssh_identity no).
+volume /home
+  noauto  yes
+  compat  busybox
+  backend_remote  btrfs-progs-sudo
+  ssh_user      no
+  ssh_identity  no
+
+  target ssh://my-user-host.com/mnt/btr_backup/home
+  subvolume  alice
+  subvolume  bob
 
 
 # Resume backups from remote host which runs its own btrbk instance
