@@ -82,7 +82,7 @@ with this package. For a detailed description, please consult the
 [btrbk.conf(5)] man-page.
 
 After a configuration change, it is highly recommended to check it by
-running btrbk with the `-n,--dryrun` option:
+running btrbk with the `-n,--dry-run` option:
 
     # btrbk -c /path/to/myconfig -v -n run
 
@@ -153,13 +153,17 @@ If you don't want to mount the btrfs root filesystem to
     snapshot_dir /btrbk_snapshots
     subvolume    /home
 
-Start a dry run:
+Start a dry run (-n, --dry-run):
 
     # btrbk run -n
 
 Create the first snapshot:
 
     # btrbk run
+
+Print schedule (-S, --print-schedule):
+
+    # btrbk run -n -S
 
 If it works as expected, configure a cron job to run btrbk hourly:
 
@@ -246,7 +250,7 @@ For a quick additional snapshot of your home, run:
 Example: Host-initiated Backup on Fileserver
 --------------------------------------------
 
-Let's say you have a fileserver at "myserver.mydomain.com" where you
+Let's say you have a fileserver at "myserver.example.org" where you
 want to create backups of your laptop disk. The config could look like
 this:
 
@@ -255,11 +259,11 @@ this:
     volume /mnt/btr_pool
       subvolume rootfs
         target /mnt/btr_backup/mylaptop
-        target ssh://myserver.mydomain.com/mnt/btr_backup/mylaptop
+        target ssh://myserver.example.org/mnt/btr_backup/mylaptop
 
 In addition to the backups on your local usb-disk mounted at
 `/mnt/btr_backup/mylaptop`, incremental backups would also be pushed
-to `myserver.mydomain.com`.
+to `myserver.example.org`.
 
 
 Example: Fileserver-initiated Backups from Several Hosts
@@ -270,17 +274,17 @@ fileserver, the config would be something like:
 
     ssh_identity /etc/btrbk/ssh/id_rsa
 
-    volume ssh://alpha.mydomain.com/mnt/btr_pool
+    volume ssh://alpha.example.org/mnt/btr_pool
       target /mnt/btr_backup/alpha
       subvolume rootfs
       subvolume home
 
-    volume ssh://beta.mydomain.com/mnt/btr_pool
+    volume ssh://beta.example.org/mnt/btr_pool
       target /mnt/btr_backup/beta
       subvolume rootfs
       subvolume dbdata
 
-This will pull backups from alpha/beta.mydomain.com and locally
+This will pull backups from alpha/beta.example.org and locally
 create:
 
   * `/mnt/btr_backup/alpha/rootfs.YYYYMMDD`
@@ -381,7 +385,7 @@ running btrbk. Something like:
     rsync -az --delete \
           --inplace --numeric-ids --acls --xattrs \
           -e 'ssh -i /etc/btrbk/ssh/id_rsa' \
-          myhost.mydomain.com:/data/ \
+          myhost.example.org:/data/ \
           /mnt/btr_backup/myhost_sync/
 
     exec /usr/bin/btrbk -q run
@@ -408,7 +412,7 @@ compressed and piped through GnuPG.
     raw_target_compress   xz
     raw_target_encrypt    gpg
     gpg_keyring           /etc/btrbk/gpg/pubring.gpg
-    gpg_recipient         btrbk@mydomain.com
+    gpg_recipient         btrbk@example.org
 
     volume /mnt/btr_pool
       subvolume home
@@ -445,7 +449,7 @@ will need the `btrfs` executable from the [btrfs-progs] package.
 On the client side, create a ssh key dedicated to btrbk, without
 password protection:
 
-    # ssh-keygen -t rsa -b 4096 -f /etc/btrbk/ssh/id_rsa -C btrbk@mydomain.com -N ""
+    # ssh-keygen -t rsa -b 4096 -f /etc/btrbk/ssh/id_rsa -C btrbk@example.org -N ""
 
 The content of the public key (/etc/btrbk/ssh/id_rsa.pub) is used for
 authentication in "authorized_keys" on the server side (see [sshd(8)]
@@ -551,14 +555,14 @@ to run it whenever the key is used for authentication. Example
 "/root/.ssh/authorized_keys":
 
     # example backup source (also allowing deletion of old snapshots)
-    command="/backup/scripts/ssh_filter_btrbk.sh -l --source --delete" <pubkey>...
+    command="/backup/scripts/ssh_filter_btrbk.sh -l --source --delete",restrict <pubkey>...
 
     # example backup target (also allowing deletion of old snapshots)
-    command="/backup/scripts/ssh_filter_btrbk.sh -l --target --delete" <pubkey>...
+    command="/backup/scripts/ssh_filter_btrbk.sh -l --target --delete",restrict <pubkey>...
 
     # example fetch-only backup source (snapshot_preserve_min=all, snapshot_create=no),
     # restricted to subvolumes within /home or /data
-    command="/backup/scripts/ssh_filter_btrbk.sh -l --send -p /home -p /data" <pubkey>...
+    command="/backup/scripts/ssh_filter_btrbk.sh -l --send -p /home -p /data",restrict <pubkey>...
 
 
   [ssh_filter_btrbk(1)]: https://digint.ch/btrbk/doc/ssh_filter_btrbk.1.html

@@ -9,16 +9,17 @@ file, choose one of the following methods:
 
 ### Generic Linux System
 
+Install [asciidoctor] if you want to build the documentation.
+
 Download and unpack the latest [btrbk source tarball] and type:
 
     sudo make install
 
+#### Try latest master from Github:
 
-### Gentoo Linux
-
-btrbk is in portage:
-
-    emerge app-backup/btrbk
+    wget https://raw.githubusercontent.com/digint/btrbk/master/btrbk
+    chmod +x btrbk
+    sudo ./btrbk ls /
 
 
 ### Debian Based Distros
@@ -30,7 +31,7 @@ Packages are also available via NeuroDebian: http://neuro.debian.net/pkgs/btrbk.
 
 ### Fedora Linux
 
-btrbk is in the official Fedora repos: https://apps.fedoraproject.org/packages/btrbk
+btrbk is in the official Fedora repos: https://src.fedoraproject.org/rpms/btrbk
 
     sudo dnf install btrbk
 
@@ -47,6 +48,13 @@ btrbk is in the community repository
     apk add btrbk
 
 
+### Gentoo Linux
+
+btrbk is in portage:
+
+    emerge app-backup/btrbk
+
+
 ### Void Linux
 
 btrbk is in Void's `current` repository
@@ -55,3 +63,4 @@ btrbk is in Void's `current` repository
 
 
   [btrbk source tarball]: https://digint.ch/download/btrbk/releases/
+  [asciidoctor]: https://asciidoctor.org

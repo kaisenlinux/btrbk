@@ -1,7 +1,7 @@
 ssh_filter_btrbk(1)
 ===================
-:date: 2022-10-23
-:release-version: 0.32.5
+:date: 2023-03-25
+:release-version: 0.32.6
 :man manual: Btrbk Manual
 :man source: Btrbk {release-version}
 
@@ -39,13 +39,13 @@ The following commands are always allowed:
  - "readlink"
  - "test -d" (only if "compat busybox" configuration option is set)
  - "cat /proc/self/mountinfo"
- - pipes through "gzip", "pigz", "bzip2", "pbzip2", "xz", "lzop",
-   "lz4", "zstd" (stream_compress)
+ - pipes through "gzip", "pigz", "bzip2", "pbzip2", "bzip3", "xz",
+   "lzop", "lz4", "zstd" (stream_compress)
  - pipes through "mbuffer" (stream_buffer, rate_limit)
 
 Example line in /root/.ssh/authorized_keys on a backup target host:
 
-    command="ssh_filter_btrbk.sh --target --delete --restrict-path /mnt/btr_backup" ssh-rsa AAAAB3NzaC1...hwumXFRQBL btrbk@mydomain.com
+    command="ssh_filter_btrbk.sh --target --delete --restrict-path /mnt/btr_backup",restrict ssh-rsa AAAAB3NzaC1...hwumXFRQBL btrbk@example.org
 
 
 OPTIONS
@@ -82,6 +82,11 @@ OPTIONS
 -p, --restrict-path <path>::
     Restrict commands to <path>. Note that "btrfs subvolume show",
     "btrfs subvolume list" are NOT affected by this option.
++
+It is not possible to restrict commands to exact subvolume names, as
+btrfs-receive(8) takes a <path> as argument (directory, not including
+the subvolume file name to be created, this is encoded in the
+send-stream).
 
 -l, --log::
     Log ACCEPT and REJECT messages to the system log.
